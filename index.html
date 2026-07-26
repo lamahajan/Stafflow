@@ -45,6 +45,8 @@ button:active{transform:scale(.97)!important;}
 .sf-header{max-width:100%}
 .sf-dash-grid-4{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .sf-mobile-header{display:block}
+.sf-sal-actions button{padding:8px 9px!important}
+.sf-sal-actions .sf-btn-txt{display:none}
 @media(min-width:768px){
   .sf-mobile-header{display:none!important}
   .sf-sidebar{display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;width:220px;z-index:60;border-right-width:1px;border-right-style:solid;padding:24px 14px 20px}
@@ -52,6 +54,8 @@ button:active{transform:scale(.97)!important;}
   .sf-main{margin-left:220px;padding-bottom:20px;max-width:calc(100vw - 220px)}
   .sf-content{max-width:860px;margin:0 auto;padding:0 8px}
   .sf-dash-grid-4{grid-template-columns:repeat(4,1fr)!important}
+  .sf-sal-actions button{padding:7px 16px!important}
+  .sf-sal-actions .sf-btn-txt{display:inline}
 }
 @media(min-width:1200px){
   .sf-sidebar{width:240px}
@@ -1492,12 +1496,12 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
       </div>
     </div>`}
     <div style=${{display:'flex',marginBottom:4}}>
-      <div style=${{display:'flex',gap:7,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none',minWidth:0,paddingBottom:2,marginBottom:-2,width:'100%'}}>
-        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="book" s=${14} c=${T.acc}/>⚡ Bulk</span>`} onClick=${()=>setTab(5)}/>
-        <${Btn} T=${T} sm style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c="#fff"/>Report</span>`} onClick=${()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);const st2=selCat==='ALL'?staff:staff.filter(s=>s.role===selCat);genPDF(mon,yr,d,adv,chq,st2,msg,ctx.cfg);}}/>
-        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c=${T.acc}/>Slips ZIP</span>`} onClick=${async()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);await downloadBulkSlipsZip(d,staff,cfg,msg);}}/>
-        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="xls" s=${14} c=${T.grn}/>Excel</span>`} onClick=${()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);downloadMonthExcel(d,staff,cfg,msg);}}/>
-        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c=${T.acc}/>Disburse</span>`} onClick=${()=>{setDisbCats([]);setShowDisb(true);}}/>
+      <div class="sf-sal-actions" style=${{display:'flex',gap:7,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none',minWidth:0,paddingBottom:2,marginBottom:-2,width:'100%'}}>
+        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="book" s=${14} c=${T.acc}/><span class="sf-btn-txt">⚡ Bulk</span></span>`} onClick=${()=>setTab(5)}/>
+        <${Btn} T=${T} sm style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c="#fff"/><span class="sf-btn-txt">Report</span></span>`} onClick=${()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);const st2=selCat==='ALL'?staff:staff.filter(s=>s.role===selCat);genPDF(mon,yr,d,adv,chq,st2,msg,ctx.cfg);}}/>
+        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c=${T.acc}/><span class="sf-btn-txt">Slips ZIP</span></span>`} onClick=${async()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);await downloadBulkSlipsZip(d,staff,cfg,msg);}}/>
+        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="xls" s=${14} c=${T.grn}/><span class="sf-btn-txt">Excel</span></span>`} onClick=${()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);downloadMonthExcel(d,staff,cfg,msg);}}/>
+        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c=${T.acc}/><span class="sf-btn-txt">Disburse</span></span>`} onClick=${()=>{setDisbCats([]);setShowDisb(true);}}/>
       </div>
     </div>
     <div style=${{marginBottom:13,display:'flex',gap:8,alignItems:'center'}}><select value=${selIdx} onChange=${e=>setSelIdx(Number(e.target.value))} style=${{...iSt(T),appearance:'none',cursor:'pointer',flex:1}}>${fyM.map((m,i)=>html`<option key=${i} value=${i}>${m.label}</option>`)}</select><button onClick=${()=>setShowMonthPicker(true)} style=${{background:T.acc+'18',border:`1px solid ${T.accB}`,borderRadius:10,padding:'10px 12px',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',gap:5,fontFamily:'inherit',fontSize:12,fontWeight:800,color:T.acc}}><${Ico} n="cal" s=${14} c=${T.acc}/></button></div>
