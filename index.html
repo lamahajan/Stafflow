@@ -120,7 +120,7 @@ function sfRestoreAll(msg){
     try{
       const text=await e.target.files[0].text();
       const data=JSON.parse(text);
-      if(!confirm('⚠️ Yeh REPLACE kar dega aapka saara current data. Sure ho?'))return;
+      if(!confirm('⚠️ This will REPLACE all your current data. Are you sure?'))return;
       ALL_KEYS.forEach(k=>{if(data[k]!==undefined)localStorage.setItem(k,data[k]);});
       if(msg)msg('✅ Data restore ho gaya! Reloading…','inf');
       setTimeout(()=>location.reload(),1200);
@@ -129,7 +129,7 @@ function sfRestoreAll(msg){
   inp.click();
 }
 async function sfPushToServer(msg){
-  if(!_db)return msg('Firebase connected nahi hai — pehle connect karo','err');
+  if(!_db)return msg('Firebase is not connected — please connect first','err');
   try{
     msg('⏳ Server pe push ho raha hai…');
     for(const k of ALL_KEYS){
@@ -1316,7 +1316,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
             </div>
           </div>
           ${totalPending>0&&html`<div style=${{background:T.red+'10',border:`1px solid ${T.red}22`,borderRadius:9,padding:'8px 10px',marginBottom:8}}>
-            <div style=${{fontSize:9,fontWeight:800,color:T.red,letterSpacing:.6,marginBottom:5,fontFamily:AD}}>Advance Deduction Amount (Kitna katna hai?)</div>
+            <div style=${{fontSize:9,fontWeight:800,color:T.red,letterSpacing:.6,marginBottom:5,fontFamily:AD}}>Advance Deduction Amount (how much to deduct?)</div>
             <div style=${{display:'flex',alignItems:'center',gap:6}}>
               <div style=${{fontSize:10,color:T.sub,whiteSpace:'nowrap'}}>Total: <b style=${{color:T.yel,fontFamily:MO}}>${fR(totalPending)}</b></div>
               <div style=${{flex:1,position:'relative'}}>
@@ -1458,7 +1458,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     ${showMonthPicker&&html`<div style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.8)',zIndex:100,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(5px)'}}>
       <div style=${{background:T.surf,borderRadius:22,width:'calc(100% - 28px)',maxWidth:360,padding:'18px 16px 20px',border:`1px solid ${T.bdr}`,boxShadow:'0 24px 64px rgba(0,0,0,.6)'}}>
         <div style=${{marginBottom:4}}>
-          <div style=${{fontSize:16,fontWeight:900,color:T.txt}}>Month Select Karo</div>
+          <div style=${{fontSize:16,fontWeight:900,color:T.txt}}>Select Month</div>
           <div style=${{fontSize:11,color:T.sub,marginTop:2}}>${fyLbl(aFY)}</div>
         </div>
         <div style=${{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:7,marginTop:14}}>
@@ -1491,18 +1491,18 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
         </div>
       </div>
     </div>`}
-    <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
-      <div><div style=${{fontSize:20,fontWeight:900,color:T.txt}}>Salary</div><div style=${{fontSize:12,color:T.sub}}>${fyLbl(aFY)} · 30-day fixed</div></div>
-      <div style=${{display:'flex',gap:7}}>
-        <${Btn} T=${T} sm v="sec" ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="book" s=${14} c=${T.acc}/>⚡ Bulk</span>`} onClick=${()=>setTab(5)}/>
-        <${Btn} T=${T} sm ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="pdf" s=${14} c="#fff"/>Report</span>`} onClick=${()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);const st2=selCat==='ALL'?staff:staff.filter(s=>s.role===selCat);genPDF(mon,yr,d,adv,chq,st2,msg,ctx.cfg);}}/>
-        <${Btn} T=${T} sm v="sec" ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="pdf" s=${14} c=${T.acc}/>Slips ZIP</span>`} onClick=${async()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);await downloadBulkSlipsZip(d,staff,cfg,msg);}}/>
-        <${Btn} T=${T} sm v="sec" ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="xls" s=${14} c=${T.grn}/>Excel</span>`} onClick=${()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);downloadMonthExcel(d,staff,cfg,msg);}}/>
-        <${Btn} T=${T} sm v="sec" ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="pdf" s=${14} c=${T.acc}/>Disburse</span>`} onClick=${()=>{setDisbCats([]);setShowDisb(true);}}/>
+    <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4,gap:10}}>
+      <div style=${{flexShrink:0}}><div style=${{fontSize:20,fontWeight:900,color:T.txt}}>Salary</div><div style=${{fontSize:12,color:T.sub}}>${fyLbl(aFY)} · 30-day fixed</div></div>
+      <div style=${{display:'flex',gap:7,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none',minWidth:0,paddingBottom:2,marginBottom:-2}}>
+        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="book" s=${14} c=${T.acc}/>⚡ Bulk</span>`} onClick=${()=>setTab(5)}/>
+        <${Btn} T=${T} sm style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c="#fff"/>Report</span>`} onClick=${()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);const st2=selCat==='ALL'?staff:staff.filter(s=>s.role===selCat);genPDF(mon,yr,d,adv,chq,st2,msg,ctx.cfg);}}/>
+        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c=${T.acc}/>Slips ZIP</span>`} onClick=${async()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);await downloadBulkSlipsZip(d,staff,cfg,msg);}}/>
+        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="xls" s=${14} c=${T.grn}/>Excel</span>`} onClick=${()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);downloadMonthExcel(d,staff,cfg,msg);}}/>
+        <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c=${T.acc}/>Disburse</span>`} onClick=${()=>{setDisbCats([]);setShowDisb(true);}}/>
       </div>
     </div>
     <div style=${{marginBottom:13,display:'flex',gap:8,alignItems:'center'}}><select value=${selIdx} onChange=${e=>setSelIdx(Number(e.target.value))} style=${{...iSt(T),appearance:'none',cursor:'pointer',flex:1}}>${fyM.map((m,i)=>html`<option key=${i} value=${i}>${m.label}</option>`)}</select><button onClick=${()=>setShowMonthPicker(true)} style=${{background:T.acc+'18',border:`1px solid ${T.accB}`,borderRadius:10,padding:'10px 12px',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',gap:5,fontFamily:'inherit',fontSize:12,fontWeight:800,color:T.acc}}><${Ico} n="cal" s=${14} c=${T.acc}/></button></div>
-    <div style=${{display:'flex',gap:6,marginBottom:13,overflowX:'auto',paddingBottom:2,flexWrap:'wrap'}}>
+    <div style=${{display:'flex',gap:6,marginBottom:13,overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:2}}>
       ${[{k:'ALL',l:'All'},...cats.filter(c=>[...undone,...monSal].some(s=>(s.role||s.role)===c)).map(c=>({k:c,l:c}))].map(({k,l})=>{
         const cnt=k==='ALL'?undone.length+monSal.length:undone.filter(s=>s.role===k).length+monSal.filter(s=>s.role===k).length;
         const ac=selCat===k;
@@ -1804,7 +1804,7 @@ function PgChq({staff,chq,setChq,sal,adv,setAdv,ctx}){
     })}
     ${pendingChq.length===0&&html`<div style=${{textAlign:'center',color:T.mut,padding:40}}>All cheques settled ✓<br/><span style=${{fontSize:12,display:'block',marginTop:6}}>View history in each staff's Ledger</span></div>`}
     ${cId&&(()=>{const c=chq.find(x=>x.id===cId);if(!c)return null;const exp=Number(c.expected||c.chqAmt||c.ret),actual=Number(actAmt)||0,sf=Math.max(0,exp-actual),sObj=staff.find(x=>x.id===c.staffId);
-    return html`<${Mdl} title="Kitna Amount Aaya? 💰" onClose=${()=>{setCId(null);setActAmt('');}} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:13}}>
+    return html`<${Mdl} title="How Much Was Received? 💰" onClose=${()=>{setCId(null);setActAmt('');}} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:13}}>
       <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:12,padding:12}}>${[['Staff',sObj?.name||'—'],['Client',c.client],c.chqNo&&['Cheque #',c.chqNo],['Expected',fR(exp)]].filter(Boolean).map(([l,v])=>html`<div key=${l} style=${{display:'flex',justifyContent:'space-between',marginBottom:6,paddingBottom:6,borderBottom:`1px solid ${T.bdr}`}}><span style=${{fontSize:13,color:T.sub}}>${l}</span><span style=${{fontSize:13,fontWeight:l==='Expected'?900:700,color:l==='Expected'?T.acc:T.txt}}>${v}</span></div>`)}</div>
       <${Inp} T=${T} label="Actual Amount Received (₹) *" type="number" value=${actAmt} onChange=${e=>setActAmt(e.target.value)} placeholder=${'Expected: '+fR(exp)} autoFocus=${true}/>
       ${actAmt&&sf>0&&html`<div style=${{background:T.red+'14',border:`1px solid ${T.red}22`,borderRadius:11,padding:11}}><div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:5}}><div style=${{display:'flex',gap:6,alignItems:'center'}}><${Ico} n="warn" s=${13} c=${T.red}/><span style=${{fontSize:12,color:T.red,fontWeight:800}}>Shortfall</span></div><span style=${{fontSize:15,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(sf)}</span></div><div style=${{fontSize:11,color:T.sub}}>${fR(sf)} → advance for ${sObj?.name||'staff'}.</div></div>`}
@@ -2032,7 +2032,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
       return html`<${Mdl} title="⚠️ Salary Delete Confirm" onClose=${()=>setDelSalConfirm(null)} T=${T}>
         <div style=${{display:'flex',flexDirection:'column',gap:12}}>
           <div style=${{background:T.red+'14',border:`1px solid ${T.red}33`,borderRadius:11,padding:12}}>
-            <div style=${{fontSize:10,fontWeight:800,color:T.red,letterSpacing:.8,marginBottom:8}}>❌ DELETE HOGA</div>
+            <div style=${{fontSize:10,fontWeight:800,color:T.red,letterSpacing:.8,marginBottom:8}}>❌ WILL BE DELETED</div>
             <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <div><div style=${{fontSize:13,fontWeight:800,color:T.txt}}>${mName(e.mon,e.yr)} — Salary</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>${e.abs>0?e.abs+'d absent':'Full month'}${e.advDed>0?' · Adv −'+fR(e.advDed):''}</div></div>
               <div style=${{textAlign:'right'}}><div style=${{fontSize:15,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(e.net)}</div><div style=${{fontSize:9,background:e.paid?T.grn+'22':T.yel+'22',color:e.paid?T.grn:T.yel,borderRadius:20,padding:'2px 6px',fontWeight:800,display:'inline-block',marginTop:2}}>${e.paid?'PAID':'PENDING'}</div></div>
@@ -2040,13 +2040,13 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
           </div>
           ${(prev.affectedAdv.length>0||prev.affectedChq.length>0||prev.autoChq.length>0)?html`
           <div style=${{background:T.yel+'12',border:`1px solid ${T.yel}33`,borderRadius:11,padding:12}}>
-            <div style=${{fontSize:10,fontWeight:800,color:T.yel,letterSpacing:.8,marginBottom:8}}>🔄 AUTOMATICALLY REVERSE HOGA</div>
+            <div style=${{fontSize:10,fontWeight:800,color:T.yel,letterSpacing:.8,marginBottom:8}}>🔄 WILL BE AUTOMATICALLY REVERSED</div>
             ${prev.affectedAdv.map(a=>html`<div key=${a.id} style=${{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:`1px solid ${T.bdr}44`}}><div><div style=${{fontSize:12,color:T.txt,fontWeight:700}}>💵 Advance${a.note?' — '+a.note:''}</div><div style=${{fontSize:10,color:T.sub}}>Deducted → Wapas Pending</div></div><span style=${{fontSize:13,fontWeight:800,color:T.yel,fontFamily:"'Inter'"}}>${fR(a.amount)}</span></div>`)}
             ${prev.affectedChq.map(c=>html`<div key=${c.id} style=${{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:`1px solid ${T.bdr}44`}}><div><div style=${{fontSize:12,color:T.txt,fontWeight:700}}>🧾 Cheque — ${c.client}</div><div style=${{fontSize:10,color:T.sub}}>Settled → Wapas Pending</div></div><span style=${{fontSize:13,fontWeight:800,color:T.yel,fontFamily:"'Inter'"}}>${fR(c.expected||c.ret)}</span></div>`)}
-            ${prev.autoChq.map(c=>html`<div key=${c.id} style=${{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0'}}><div><div style=${{fontSize:12,color:T.txt,fontWeight:700}}>🗑 Auto Cheque — ${c.client||'margin'}</div><div style=${{fontSize:10,color:T.sub}}>Auto-created margin cheque delete hoga</div></div><span style=${{fontSize:13,fontWeight:800,color:T.red,fontFamily:"'Inter'"}}>${fR(c.expected||c.ret)}</span></div>`)}
+            ${prev.autoChq.map(c=>html`<div key=${c.id} style=${{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0'}}><div><div style=${{fontSize:12,color:T.txt,fontWeight:700}}>🗑 Auto Cheque — ${c.client||'margin'}</div><div style=${{fontSize:10,color:T.sub}}>Auto-created margin cheque will be deleted</div></div><span style=${{fontSize:13,fontWeight:800,color:T.red,fontFamily:"'Inter'"}}>${fR(c.expected||c.ret)}</span></div>`)}
           </div>`:html`
-          <div style=${{background:T.grn+'12',border:`1px solid ${T.grn}33`,borderRadius:11,padding:'10px 12px',fontSize:12,color:T.grn,fontWeight:700}}>✓ Koi linked advance/cheque nahi — sirf salary record delete hoga</div>`}
-          <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setDelSalConfirm(null)}/><${Btn} T=${T} v="danger" full ch="Haan, Delete Karo" onClick=${doDelSal}/></div>
+          <div style=${{background:T.grn+'12',border:`1px solid ${T.grn}33`,borderRadius:11,padding:'10px 12px',fontSize:12,color:T.grn,fontWeight:700}}>✓ No linked advance/cheque — only the salary record will be deleted</div>`}
+          <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setDelSalConfirm(null)}/><${Btn} T=${T} v="danger" full ch="Yes, Delete" onClick=${doDelSal}/></div>
         </div>
       <//>`;
     })()}
@@ -2096,7 +2096,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
     <!-- ── ADVANCE EDIT MODAL ── -->
     ${editAdvEntry&&html`<${Mdl} title="✏️ Edit Advance" onClose=${()=>setEditAdvEntry(null)} T=${T}>
       <div style=${{display:'flex',flexDirection:'column',gap:13}}>
-        ${editAdvEntry.status==='deducted'&&html`<div style=${{background:T.yel+'14',border:`1px solid ${T.yel}33`,borderRadius:10,padding:'8px 11px',fontSize:12,color:T.yel,fontWeight:700}}>⚠ Yeh advance already deduct ho chuka hai. Edit careful karo.</div>`}
+        ${editAdvEntry.status==='deducted'&&html`<div style=${{background:T.yel+'14',border:`1px solid ${T.yel}33`,borderRadius:10,padding:'8px 11px',fontSize:12,color:T.yel,fontWeight:700}}>⚠ This advance has already been deducted. Edit carefully.</div>`}
         <${Inp} T=${T} label="Amount (₹) *" type="number" value=${editAdvForm.amount} onChange=${ev=>setEditAdvForm(f=>({...f,amount:ev.target.value}))} placeholder="e.g. 2000"/>
         <${Inp} T=${T} label="Date" type="date" value=${editAdvForm.date} onChange=${ev=>setEditAdvForm(f=>({...f,date:ev.target.value}))}/>
         <${Inp} T=${T} label="Reason / Note" value=${editAdvForm.note} onChange=${ev=>setEditAdvForm(f=>({...f,note:ev.target.value}))} placeholder="e.g. emergency"/>
@@ -2111,7 +2111,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
           <div style=${{background:T.red+'14',border:`1px solid ${T.red}33`,borderRadius:11,padding:12}}>
             <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style=${{fontSize:13,fontWeight:800,color:T.txt}}>Advance${a.note?' — '+a.note:''}</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>${a.date} · Status: ${a.status}</div></div><div style=${{fontSize:16,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(a.amount)}</div></div>
           </div>
-          ${a.status==='deducted'&&html`<div style=${{background:T.yel+'14',border:`1px solid ${T.yel}33`,borderRadius:10,padding:'8px 11px',fontSize:12,color:T.yel,fontWeight:700}}>⚠ Yeh advance already deduct ho chuka hai — delete karne ke baad salary recalculation manually check karo.</div>`}
+          ${a.status==='deducted'&&html`<div style=${{background:T.yel+'14',border:`1px solid ${T.yel}33`,borderRadius:10,padding:'8px 11px',fontSize:12,color:T.yel,fontWeight:700}}>⚠ This advance has already been deducted — after deleting, please manually check the salary recalculation.</div>`}
           <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setDelAdvId(null)}/><${Btn} T=${T} v="danger" full ch="Delete Advance" onClick=${doDelAdv}/></div>
         </div>
       <//>`;
@@ -2120,7 +2120,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
     <!-- ── CHEQUE EDIT MODAL ── -->
     ${editChqEntry&&html`<${Mdl} title="✏️ Edit Cheque Entry" onClose=${()=>setEditChqEntry(null)} T=${T}>
       <div style=${{display:'flex',flexDirection:'column',gap:13}}>
-        ${editChqEntry.status==='settled'&&html`<div style=${{background:T.yel+'14',border:`1px solid ${T.yel}33`,borderRadius:10,padding:'8px 11px',fontSize:12,color:T.yel,fontWeight:700}}>⚠ Yeh cheque already settle ho chuka hai.</div>`}
+        ${editChqEntry.status==='settled'&&html`<div style=${{background:T.yel+'14',border:`1px solid ${T.yel}33`,borderRadius:10,padding:'8px 11px',fontSize:12,color:T.yel,fontWeight:700}}>⚠ This cheque has already been settled.</div>`}
         <${Inp} T=${T} label="Client Name *" value=${editChqForm.client} onChange=${ev=>setEditChqForm(f=>({...f,client:ev.target.value}))} placeholder="Client name"/>
         <${Inp} T=${T} label="Cheque Number" value=${editChqForm.chqNo} onChange=${ev=>setEditChqForm(f=>({...f,chqNo:ev.target.value}))} placeholder="e.g. 001234"/>
         <${Inp} T=${T} label="Expected Amount (₹)" type="number" value=${editChqForm.expected} onChange=${ev=>setEditChqForm(f=>({...f,expected:ev.target.value}))} placeholder="0"/>
@@ -2139,7 +2139,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
           <div style=${{background:T.red+'14',border:`1px solid ${T.red}33`,borderRadius:11,padding:12}}>
             <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style=${{fontSize:13,fontWeight:800,color:T.txt}}>Cheque — ${c.client}</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>${c.date}${c.chqNo?' · #'+c.chqNo:''} · ${c.status}</div></div><div style=${{fontSize:16,fontWeight:900,color:T.yel,fontFamily:"'Inter'"}}>${fR(c.expected||c.ret)}</div></div>
           </div>
-          ${c.status==='settled'&&html`<div style=${{background:T.yel+'14',border:`1px solid ${T.yel}33`,borderRadius:10,padding:'8px 11px',fontSize:12,color:T.yel,fontWeight:700}}>⚠ Settled cheque delete kar rahe ho — account balance affect hoga.</div>`}
+          ${c.status==='settled'&&html`<div style=${{background:T.yel+'14',border:`1px solid ${T.yel}33`,borderRadius:10,padding:'8px 11px',fontSize:12,color:T.yel,fontWeight:700}}>⚠ You're deleting a settled cheque — this will affect the account balance.</div>`}
           <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setDelChqId(null)}/><${Btn} T=${T} v="danger" full ch="Delete Cheque" onClick=${doDelChq}/></div>
         </div>
       <//>`;
@@ -2414,7 +2414,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
         <div style=${{marginTop:12,background:T.bg,borderRadius:10,padding:12,border:`1px solid ${T.bdr}`}}>
           <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:8}}>CAPPING (OPTIONAL)</div>
           <div style=${{fontSize:12,color:T.sub,marginBottom:8}}>
-            ${updMode==='pct'?'e.g. 10% ya ₹1000, jo bhi zyada/kam ho':'e.g. fixed ₹500 ya % ka result, jo bhi zyada/kam ho'}
+            ${updMode==='pct'?'e.g. 10% or ₹1000, whichever is higher/lower':'e.g. fixed ₹500 or a % result, whichever is higher/lower'}
           </div>
           <${Inp} T=${T} label="Cap Amount (₹)" type="number" value=${updCap} onChange=${e=>setUpdCap(e.target.value)} placeholder="e.g. 1000 (blank = no cap)"/>
           ${updCap&&Number(updCap)>0&&html`<div style=${{display:'flex',gap:8,marginTop:8}}>
@@ -2489,7 +2489,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
       return html`<div style=${{display:'flex',flexDirection:'column',gap:14}}>
         <div style=${{background:T.card,border:'1px solid '+T.bdr,borderRadius:14,padding:14}}>
           <div style=${{fontSize:11,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:12}}>📤 CATEGORY EXPORT (JSON)</div>
-          <div style=${{fontSize:12,color:T.sub,marginBottom:12,lineHeight:1.5}}>Category-wise ya poora data JSON mein export karo. Kisi bhi device pe import karo.</div>
+          <div style=${{fontSize:12,color:T.sub,marginBottom:12,lineHeight:1.5}}>Export data by category or in full as JSON. Import it on any device.</div>
           <div style=${{marginBottom:12}}>
             <div style=${{fontSize:11,color:T.sub,fontWeight:800,marginBottom:8}}>CATEGORY SELECT</div>
             <div style=${{display:'flex',gap:6,flexWrap:'wrap'}}>
@@ -2511,14 +2511,14 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
         </div>
         <div style=${{background:T.card,border:'1px solid '+T.bdr,borderRadius:14,padding:14}}>
           <div style=${{fontSize:11,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:12}}>📥 IMPORT JSON</div>
-          <div style=${{fontSize:12,color:T.sub,marginBottom:10,lineHeight:1.5}}>Previously exported JSON file import karo. Category export merge hoga, full backup replace karega.</div>
+          <div style=${{fontSize:12,color:T.sub,marginBottom:10,lineHeight:1.5}}>Import a previously exported JSON file. A category export will be merged; a full backup will replace all data.</div>
           <button onClick=${importCategoryJSON} style=${{width:'100%',background:T.grn,color:'#fff',border:'none',borderRadius:10,padding:'11px',fontSize:13,fontWeight:800,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:7}}>
             <${Ico} n="up" s=${16} c="#fff"/> Import JSON File
           </button>
         </div>
         <div style=${{background:T.card,border:'1px solid '+T.bdr,borderRadius:14,padding:14}}>
           <div style=${{fontSize:11,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:4}}>📊 REPORTS</div>
-          <div style=${{fontSize:12,color:T.sub,marginBottom:12,lineHeight:1.5}}>Monthly PDF report ab <b>Salary tab</b> ke andar hai (Report button, category filter ke sath). Yahan sirf per-staff Annual Statement generate karo.</div>
+          <div style=${{fontSize:12,color:T.sub,marginBottom:12,lineHeight:1.5}}>The monthly PDF report is now inside the <b>Salary tab</b> (Report button, with category filter). Here you can only generate the per-staff Annual Statement.</div>
           ${staff.length>0?html`<div style=${{display:'flex',flexDirection:'column',gap:8}}>
             ${staff.map(s=>html`<div key=${s.id} style=${{display:'flex',justifyContent:'space-between',alignItems:'center',background:T.bg,borderRadius:10,padding:'9px 12px'}}>
               <div><div style=${{fontSize:13,fontWeight:800,color:T.txt}}>${s.name}</div><div style=${{fontSize:11,color:T.sub}}>${s.role}${s.client?' · '+s.client:''}</div></div>
@@ -2566,7 +2566,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
           <!-- ── CATEGORY + STAFF RECORD DELETE ── -->
           <div style=${{background:T.card,border:'1px solid '+T.bdr,borderRadius:14,padding:14}}>
             <div style=${{fontSize:11,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:4}}>🗑 CATEGORY / STAFF RECORD DELETE</div>
-            <div style=${{fontSize:12,color:T.sub,marginBottom:12,lineHeight:1.5}}>Category filter → staff select → unke salary/advance/cheque records choose karke delete karo. Staff member khud nahi delete hoga — uske liye "Clear All Data" tab me jao.</div>
+            <div style=${{fontSize:12,color:T.sub,marginBottom:12,lineHeight:1.5}}>Category filter → select staff → choose and delete their salary/advance/cheque records. The staff member itself won't be deleted — for that, go to the "Clear All Data" tab.</div>
             <!-- Category filter chips -->
             <div style=${{display:'flex',gap:6,flexWrap:'wrap',marginBottom:12}}>
               ${[{k:'ALL',l:'All ('+staff.length+')'},...cats.filter(c=>staff.some(s=>s.role===c)).map(c=>({k:c,l:c+' ('+staff.filter(s=>s.role===c).length+')'}))].map(({k,l})=>html`<button key=${k} onClick=${()=>{setDelCat(k);setDelIds(new Set());setDelCatTypes({sal:false,adv:false,chq:false});}}
@@ -2595,7 +2595,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
             </div>
             <!-- Record type checkboxes — show only when staff selected -->
             ${delIds.size>0&&html`<div style=${{background:T.bg,borderRadius:10,padding:11,marginBottom:10}}>
-              <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:8}}>SELECTED STAFF KE KYA DELETE KAREIN?</div>
+              <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:8}}>WHAT TO DELETE FOR SELECTED STAFF?</div>
               ${[['sal','💰 Salary Records',T.acc],['adv','💵 Advances',T.red],['chq','🧾 Cheques',T.yel]].map(([k,l,c])=>{
                 const cnt=[...delIds].reduce((a,id)=>a+(k==='sal'?sal.filter(x=>x.sid===id).length:k==='adv'?adv.filter(x=>x.staffId===id).length:chq.filter(x=>x.staffId===id).length),0);
                 return html`<label key=${k} style=${{display:'flex',alignItems:'center',gap:9,cursor:'pointer',padding:'7px 10px',marginBottom:5,background:delCatTypes[k]?c+'12':T.card,border:'1px solid '+(delCatTypes[k]?c+'44':T.bdr),borderRadius:9}}>
@@ -2639,7 +2639,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
           <!-- ── DELETE STAFF PERMANENTLY ── -->
           <div style=${{background:T.card,border:'1px solid '+T.red+'33',borderRadius:14,padding:14}}>
             <div style=${{fontSize:11,fontWeight:800,color:T.red,letterSpacing:.8,marginBottom:4}}>🚫 DELETE STAFF (PERMANENTLY)</div>
-            <div style=${{fontSize:12,color:T.sub,marginBottom:12,lineHeight:1.5}}>Staff member ko hamesha ke liye delete karo — unke saare salary/advance/cheque records bhi saath hi delete ho jayenge.</div>
+            <div style=${{fontSize:12,color:T.sub,marginBottom:12,lineHeight:1.5}}>Permanently delete a staff member — all their salary/advance/cheque records will be deleted along with them.</div>
             <!-- Category filter chips -->
             <div style=${{display:'flex',gap:6,flexWrap:'wrap',marginBottom:12}}>
               ${[{k:'ALL',l:'All ('+staff.length+')'},...cats.filter(c=>staff.some(s=>s.role===c)).map(c=>({k:c,l:c+' ('+staff.filter(s=>s.role===c).length+')'}))].map(({k,l})=>html`<button key=${k} onClick=${()=>{setDelStaffCat(k);setDelStaffIds(new Set());}}
@@ -2793,7 +2793,7 @@ function SyncSec({cfg,setCfg,fbSt,setFbSt,T,msg}){
     <div style=${{display:'flex',gap:10}}>${fbSt==='connected'?html`<${Btn} T=${T} v="danger" full ch="Disconnect" onClick=${disc}/>`:html`<${Btn} T=${T} full ch=${testing?'Connecting…':'Connect & Sync'} onClick=${connect} disabled=${testing}/>`}</div>
     <div style=${{marginTop:14,paddingTop:12,borderTop:`1.5px dashed ${T.bdr}`}}>
       <div style=${{fontSize:12,fontWeight:800,color:T.sub,marginBottom:6}}>📦 Config Transfer (New Machine ke liye)</div>
-      <div style=${{fontSize:11,color:T.mut,marginBottom:8}}>Firebase credentials export karo. Kisi bhi machine pe import karo — sab auto load hoga.</div>
+      <div style=${{fontSize:11,color:T.mut,marginBottom:8}}>Export Firebase credentials. Import on any machine — everything will auto-load.</div>
       <div style=${{display:'flex',gap:8}}>
         <button onClick=${()=>sfExportCfg()} style=${{flex:1,background:T.acc,color:'#fff',border:'none',borderRadius:8,padding:'8px 0',fontSize:12,fontWeight:800,cursor:'pointer'}}>⬇️ Export Config</button>
         <button onClick=${()=>sfImportCfg(msg)} style=${{flex:1,background:T.card,color:T.txt,border:`1.5px solid ${T.bdr}`,borderRadius:8,padding:'8px 0',fontSize:12,fontWeight:800,cursor:'pointer'}}>⬆️ Import Config</button>
@@ -2801,7 +2801,7 @@ function SyncSec({cfg,setCfg,fbSt,setFbSt,T,msg}){
     </div>
     <div style=${{background:T.card,border:'1px solid '+T.bdr,borderRadius:14,padding:14}}>
       <div style=${{fontSize:11,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:12}}>💾 FULL DATA BACKUP</div>
-      <div style=${{fontSize:12,color:T.sub,marginBottom:10}}>Poora data (staff, salary, advances, cheques) ek JSON file mein save/restore karo.</div>
+      <div style=${{fontSize:12,color:T.sub,marginBottom:10}}>Save/restore all data (staff, salary, advances, cheques) as a single JSON file.</div>
       <div style=${{display:'flex',gap:8}}>
         <button onClick=${()=>sfBackupAll(msg)} style=${{flex:1,background:T.grn,color:'#fff',border:'none',borderRadius:8,padding:'9px 0',fontSize:12,fontWeight:800,cursor:'pointer',fontFamily:'inherit'}}>💾 Backup All</button>
         <button onClick=${()=>sfRestoreAll(msg)} style=${{flex:1,background:T.card,color:T.txt,border:'1.5px solid '+T.grn+'55',borderRadius:8,padding:'9px 0',fontSize:12,fontWeight:800,cursor:'pointer',fontFamily:'inherit'}}>📂 Restore</button>
@@ -2809,9 +2809,9 @@ function SyncSec({cfg,setCfg,fbSt,setFbSt,T,msg}){
     </div>
     <div style=${{marginTop:12,paddingTop:12,borderTop:`1.5px dashed ${T.bdr}`}}>
       <div style=${{fontSize:12,fontWeight:800,color:T.sub,marginBottom:4}}>☁️ Push Local → Server</div>
-      <div style=${{fontSize:11,color:T.mut,marginBottom:8}}>Is device ka saara data Firebase pe push karo — server ka data replace ho jayega.</div>
+      <div style=${{fontSize:11,color:T.mut,marginBottom:8}}>Push this device's data to Firebase — the server's data will be replaced.</div>
       <button onClick=${()=>sfPushToServer(msg)} disabled=${fbSt!=='connected'} style=${{width:'100%',background:fbSt==='connected'?T.blu:T.bdr2,color:fbSt==='connected'?'#fff':T.mut,border:'none',borderRadius:8,padding:'9px 0',fontSize:12,fontWeight:800,cursor:fbSt==='connected'?'pointer':'not-allowed',opacity:fbSt==='connected'?1:.6}}>
-        ${fbSt==='connected'?'🚀 Push to Firebase':'🔒 Firebase se pehle connect karo'}
+        ${fbSt==='connected'?'🚀 Push to Firebase':'🔒 Connect to Firebase first'}
       </button>
     </div>
   </div>`;
