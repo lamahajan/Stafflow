@@ -1609,6 +1609,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
               const esicEr2=rate2<=esicWL2?Math.round(rate2*((st2.esicEr??3.25)/100)):0;
               const totalStat2=epfEmp2+esicEmp2+epfPF2+eps2+esicEr2;
               const other2=Math.max(0,mDedAmt-totalStat2);
+              if(mDedAmt<=0)return null;
               const brows=[
                 ['EPF Employee ('+(st2.epfEmp??12)+'%)',epfEmp2,false],
                 ...(esicEmp2>0?[['ESIC Employee ('+(st2.esicEmp??0.75)+'%)',esicEmp2,false]]:[]),
@@ -1633,14 +1634,14 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
         </div>
       <//>`;
     })()}
-    ${viewS&&html`<${Mdl} title="Salary Slip" onClose=${()=>setViewS(null)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:9}}>${[['Staff',viewS.name],['Role',viewS.role],['Client',viewS.client||'—'],['Period',mName(viewS.mon,viewS.yr)],['Monthly Rate',fR(viewS.mRate)],['Per Day',fR(Math.round(viewS.pDay))],['Absent',viewS.abs],...((viewS.epfEmpAmt||0)>0?[
+    ${viewS&&html`<${Mdl} title="Salary Slip" onClose=${()=>setViewS(null)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:9}}>${[['Staff',viewS.name],['Role',viewS.role],['Client',viewS.client||'—'],['Period',mName(viewS.mon,viewS.yr)],['Monthly Rate',fR(viewS.mRate)],['Per Day',fR(Math.round(viewS.pDay))],['Absent',viewS.abs],...((viewS.mDedAmt||0)>0&&(viewS.epfEmpAmt||0)>0?[
   ['EPF (Employee 12%)','−'+fR(viewS.epfEmpAmt||0)],
   ['  ↳ EPF A/c (Employer '+((viewS.epfPFAmt||0)>0?'3.67%':'')+')',fR(viewS.epfPFAmt||0)],
   ['  ↳ EPS Pension (Employer '+((viewS.epsAmt||0)>0?'8.33%':'')+')',fR(viewS.epsAmt||0)],
-]:[] ),...((viewS.esicEmpAmt||0)>0?[
+]:[] ),...((viewS.mDedAmt||0)>0&&(viewS.esicEmpAmt||0)>0?[
   ['ESIC (Employee 0.75%)','−'+fR(viewS.esicEmpAmt||0)],
   ['ESIC (Employer 3.25%)',fR(viewS.esicErAmt||0)],
-]:[] ),...((viewS.mDedAmt||0)>0&&!(viewS.epfEmpAmt)?[['Total Deduction','−'+fR(viewS.mDedAmt)]]:[] ),['Gross',fR(viewS.gross)],['Adv.Ded','−'+fR(viewS.advDed)],['Net Salary',fR(viewS.net)],['Client Paid',fR(viewS.cp||0)],['Margin',(viewS.margin>=0?'+':'')+fR(viewS.margin||0)],['Status',viewS.paid?'✅ Paid':'⏳ Pending']].map(([l,v])=>html`<div key=${l} style=${{display:'flex',justifyContent:'space-between',borderBottom:`1px solid ${T.bdr}`,paddingBottom:7}}><span style=${{color:T.sub,fontSize:13}}>${l}</span><span style=${{fontSize:13,fontWeight:['Net Salary','Margin','Gross'].includes(l)?800:600,color:l==='Net Salary'?T.acc:l==='Margin'?(viewS.margin||0)>=0?T.grn:T.red:String(l).includes('Employer')?T.pur:T.txt}}>${v}</span></div>`)}</div><//>`}
+]:[] ),...((viewS.mDedAmt||0)>0&&!(viewS.epfEmpAmt)?[['Total Deduction','−'+fR(viewS.mDedAmt)]]:[] ),...((viewS.mDedAmt||0)===0?[['Deductions','Nil']]:[] ),['Gross',fR(viewS.gross)],['Adv.Ded','−'+fR(viewS.advDed)],['Net Salary',fR(viewS.net)],['Client Paid',fR(viewS.cp||0)],['Margin',(viewS.margin>=0?'+':'')+fR(viewS.margin||0)],['Status',viewS.paid?'✅ Paid':'⏳ Pending']].map(([l,v])=>html`<div key=${l} style=${{display:'flex',justifyContent:'space-between',borderBottom:`1px solid ${T.bdr}`,paddingBottom:7}}><span style=${{color:T.sub,fontSize:13}}>${l}</span><span style=${{fontSize:13,fontWeight:['Net Salary','Margin','Gross'].includes(l)?800:600,color:l==='Net Salary'?T.acc:l==='Margin'?(viewS.margin||0)>=0?T.grn:T.red:String(l).includes('Employer')?T.pur:T.txt}}>${v}</span></div>`)}</div><//>`}
     ${showDisb&&html`<${Mdl} title="📄 Disbursement PDF" onClose=${()=>setShowDisb(false)} T=${T}>
       <div style=${{display:'flex',flexDirection:'column',gap:14}}>
         <div style=${{fontSize:13,color:T.sub}}>Select categories to include in the disbursement sheet. Sheet shows: Staff Name · Absent Days · Net Salary · Signature column.</div>
