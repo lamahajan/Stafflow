@@ -149,6 +149,36 @@ const fR=n=>'₹'+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,m
 // PDF-safe rupee formatter — jsPDF's built-in helvetica font has no ₹ glyph (it rendered as a broken "¶"),
 // so every PDF (slip, reports, ledger, cheques) uses "Rs." instead of the ₹ symbol.
 const fRp=n=>'Rs. '+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+// Total statutory deduction (EPF Employee+Employer, EPS, ESIC Employee+Employer) — based on Pay as per Record.
+const totalDeduction=(recPay,st)=>{
+  st=st||{};
+  const rp=Number(recPay)||0;
+  if(!rp)return 0;
+  const epsWageCeil=st.epsWageCeil??15000;
+  const esicWageLim=st.esicWageLim??21000;
+  const capBase=Math.min(rp,epsWageCeil);
+  const epfEmpAmt=Math.round(rp*((st.epfEmp??12)/100));
+  const epfPFAmt=Math.round(capBase*((st.epfErPF??3.67)/100));
+  const epsAmt=Math.round(capBase*((st.epfErEPS??8.33)/100));
+  const esicEmpAmt=rp<=esicWageLim?Math.round(rp*((st.esicEmp??0.75)/100)):0;
+  const esicErAmt=rp<=esicWageLim?Math.round(rp*((st.esicEr??3.25)/100)):0;
+  return epfEmpAmt+epfPFAmt+epsAmt+esicEmpAmt+esicErAmt;
+};
+// Cheque Amount = Pay as per Record minus EPF Employer (3.67%) minus EPS Employer (8.33%), both capped at the EPS wage ceiling, minus ESIC Employee (0.75%, if within the ESIC wage limit).
+const roundAmt=(amt,st)=>{const n=Number(amt)||0;return (st&&st.roundOff10)?Math.round(n/5)*5:n;};
+const chequeAmt=(recPay,st)=>{
+  st=st||{};
+  const rp=Number(recPay)||0;
+  const epsWageCeil=st.epsWageCeil??15000;
+  const esicWageLim=st.esicWageLim??21000;
+  const capBase=Math.min(rp,epsWageCeil);
+  const epfPFAmt=Math.round(capBase*((st.epfErPF??3.67)/100));
+  const epsAmt=Math.round(capBase*((st.epfErEPS??8.33)/100));
+  const esicEmpAmt=rp<=esicWageLim?Math.round(rp*((st.esicEmp??0.75)/100)):0;
+  let amt=Math.max(0,Math.round(rp-epfPFAmt-epsAmt-esicEmpAmt));
+  if(st.roundOff10)amt=Math.round(amt/5)*5;
+  return amt;
+};
 const mName=(m,y)=>new Date(y,m-1,1).toLocaleString('en-IN',{month:'long',year:'numeric'});
 const FD=30;
 const getFY=d=>{const x=new Date(d||Date.now());return x.getMonth()>=3?x.getFullYear():x.getFullYear()-1;};
@@ -341,7 +371,7 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
   const W=148, H=210;
   // Slip prints at a fixed 72x118mm size, top-centre on an A4 sheet (e.g. for gate-pass-card stock)
   const realDoc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-  const SLIP_W=72, SLIP_H=118, TOP_MARGIN=2.54; // 0.1" top margin
+  const SLIP_W=72, SLIP_H=118, TOP_MARGIN=0;
   const SCALE=Math.min(SLIP_W/W, SLIP_H/H);
   const OFF_X=(realDoc.internal.pageSize.getWidth()-W*SCALE)/2, OFF_Y=TOP_MARGIN;
   const sx=v=>OFF_X+v*SCALE, sy=v=>OFF_Y+v*SCALE;
@@ -385,17 +415,12 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
   const absDedCP=Math.round(pDayCP*abs);
   const grossCP=Math.max(0,cp-absDedCP);
   const mDed=Number(salRec.mDed||0);
-  const rate=Number(salRec.mRate)||0;
+  const rate=Number(salRec.recPay)||0;
   const esicWL=st.esicWageLim??21000;
   const epfE=Math.round(Math.round(rate*((st.epfEmp??12)/100))*paidRatio);
   const esicE=rate<=esicWL?Math.round(Math.round(rate*((st.esicEmp??0.75)/100))*paidRatio):0;
   const otherDed=Math.max(0,mDed-epfE-esicE);
   const netPay=Math.max(0,grossCP-mDed);
-  const epfPFslip=Math.round(rate*((st.epfErPF??3.67)/100));
-  const epsSlip=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErEPS??8.33)/100));
-  const esicErSlip=rate<=esicWL?Math.round(rate*((st.esicEr??3.25)/100)):0;
-  const totalStatSlip=epfE+esicE+epfPFslip+epsSlip+esicErSlip;
-  const otherSlip=Math.max(0,mDed-totalStatSlip);
 
   if(isBW){
     // ══════════════════ B&W MODE — true minimalist black & white ══════════════════
@@ -445,8 +470,7 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
 
     colHead(leftX,'Earnings');
     let yE=y+8.5;
-    yE=drawRow(leftX,yE,'Monthly CTC',fmt(cp));
-    yE=drawRow(leftX,yE,'Per Day Rate (/30)',fmt(Math.round(pDayCP)));
+    yE=drawRow(leftX,yE,'Monthly Salary',fmt(cp));
     if(abs>0) yE=drawRow(leftX,yE,'Loss of Pay ('+abs+'d)','- '+fmt(absDedCP));
     subTotalLine(leftX,yE);yE+=1.5;
     yE=drawRow(leftX,yE,'Gross Earnings',fmt(grossCP),true);
@@ -456,11 +480,8 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
     if(mDed===0){ yD=drawRow(rightX,yD,'No Deductions','Nil'); }
     else{
       if(epfE>0) yD=drawRow(rightX,yD,'EPF Employee ('+(st.epfEmp??12)+'%)','- '+fmt(epfE));
-      if(epfPFslip>0) yD=drawRow(rightX,yD,'EPF Employer ('+(st.epfErPF??3.67)+'%)','- '+fmt(epfPFslip));
-      if(epsSlip>0) yD=drawRow(rightX,yD,'EPS Employer ('+(st.epfErEPS??8.33)+'%)','- '+fmt(epsSlip));
       if(esicE>0) yD=drawRow(rightX,yD,'ESIC Employee ('+(st.esicEmp??0.75)+'%)','- '+fmt(esicE));
-      if(esicErSlip>0) yD=drawRow(rightX,yD,'ESIC Employer ('+(st.esicEr??3.25)+'%)','- '+fmt(esicErSlip));
-      if(otherSlip>0) yD=drawRow(rightX,yD,'Other Deduction','- '+fmt(otherSlip));
+      if(otherDed>0) yD=drawRow(rightX,yD,'Other Deduction','- '+fmt(otherDed));
     }
     yD+=1.5;subTotalLine(rightX,yD);yD+=1.5;
     yD=drawRow(rightX,yD,'Total Deduction',mDed>0?'- '+fmt(mDed):fmt(0),true);
@@ -556,8 +577,7 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
 
   colHead(leftX,'EARNINGS',ACC);
   let yE=y+9.5;
-  yE=drawRow(leftX,yE,'Monthly CTC',fmt(cp));
-  yE=drawRow(leftX,yE,'Per Day Rate (/30)',fmt(Math.round(pDayCP)));
+  yE=drawRow(leftX,yE,'Monthly Salary',fmt(cp));
   if(abs>0) yE=drawRow(leftX,yE,'Loss of Pay ('+abs+'d)','- '+fmt(absDedCP),false,RED);
   subTotalLine(leftX,yE);yE+=1.5;
   yE=drawRow(leftX,yE,'Gross Earnings',fmt(grossCP),true,GRN);
@@ -567,11 +587,8 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
   if(mDed===0){ yD=drawRow(rightX,yD,'No Deductions','Nil'); }
   else{
     if(epfE>0) yD=drawRow(rightX,yD,'EPF Employee ('+(st.epfEmp??12)+'%)','- '+fmt(epfE));
-    if(epfPFslip>0) yD=drawRow(rightX,yD,'EPF Employer ('+(st.epfErPF??3.67)+'%)','- '+fmt(epfPFslip));
-    if(epsSlip>0) yD=drawRow(rightX,yD,'EPS Employer ('+(st.epfErEPS??8.33)+'%)','- '+fmt(epsSlip));
     if(esicE>0) yD=drawRow(rightX,yD,'ESIC Employee ('+(st.esicEmp??0.75)+'%)','- '+fmt(esicE));
-    if(esicErSlip>0) yD=drawRow(rightX,yD,'ESIC Employer ('+(st.esicEr??3.25)+'%)','- '+fmt(esicErSlip));
-    if(otherSlip>0) yD=drawRow(rightX,yD,'Other Deduction','- '+fmt(otherSlip));
+    if(otherDed>0) yD=drawRow(rightX,yD,'Other Deduction','- '+fmt(otherDed));
   }
   yD+=1.5;subTotalLine(rightX,yD);yD+=1.5;
   yD=drawRow(rightX,yD,'Total Deduction',mDed>0?'- '+fmt(mDed):fmt(0),true,RED);
@@ -627,9 +644,9 @@ async function downloadMonthExcel(monSal, staff, cfg, msgFn){
     const rows=monSal.map(s=>{
       const stf=staff.find(x=>x.id===s.sid)||{};
       const FD=30, abs=Number(s.abs)||0, paidDays=FD-abs, paidRatio=paidDays/FD;
-      const rate=Number(s.mRate)||0;
+      const rate=Number(s.recPay)||0;
       const epfEmp=Math.round(Math.round(rate*((st.epfEmp??12)/100))*paidRatio);
-      const epfPF=Math.round(Math.round(rate*((st.epfErPF??3.67)/100))*paidRatio);
+      const epfPF=Math.round(Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErPF??3.67)/100))*paidRatio);
       const epsAmt=Math.round(Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErEPS??8.33)/100))*paidRatio);
       const esicEmp=rate<=esicWL?Math.round(Math.round(rate*((st.esicEmp??0.75)/100))*paidRatio):0;
       const esicEr=rate<=esicWL?Math.round(Math.round(rate*((st.esicEr??3.25)/100))*paidRatio):0;
@@ -1154,41 +1171,40 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   const processedFiltered=monSal.filter(s=>selCat==='ALL'||s.role===staff.find(x=>x.sid===s.sid)?.role||s.role===selCat);
   // Helpers
   const getAbs=(id)=>{ const v=absMap[id]; if(v!==undefined)return parseFloat(v)||0; return attData[id]!==undefined?Number(attData[id]):0; };
-  const getCp=(id,s)=>{ const v=cpMap[id]; if(v!==undefined)return parseFloat(v)||0; return parseFloat(s.cRate||0); };
+  const getCp=(id,s)=>{ const v=cpMap[id]; if(v!==undefined)return parseFloat(v)||0; return chequeAmt(s.recPay,cfg.statutory); };
   const calcSal=(s,absV,cpV)=>{
     const pDay=Number(s.mRate)/FD, ab=Math.max(0,absV);
     const wd=FD, proBase=pDay*wd, absDed=pDay*Math.min(ab,wd);
-    // mDed is the actual deduction — EPF/ESIC is display-only
-    const mDedAmt=Number(s.mDed||0);
-    const gross=Math.max(0,proBase-absDed-mDedAmt);
-    // EPF/ESIC — computed for display on salary slip only, NOT used in calculation
+    // Deduction is now fully auto-calculated from statutory rates, based on Pay as per Record — no manual entry
     const st=cfg.statutory||{};
-    const rate=Number(s.mRate)||0;
+    const rate=Number(s.recPay)||0;
     const esicWL=st.esicWageLim??21000;
     const epfEmpAmt=s.epfOvr!==undefined&&s.epfOvr!==''?Number(s.epfOvr):Math.round(rate*((st.epfEmp??12)/100));
     const epfPFpct=st.epfErPF??3.67, epsPct=st.epfErEPS??8.33;
     const epsWageCeil=st.epsWageCeil??15000;
-    const epfPFAmt=Math.round(rate*(epfPFpct/100));
+    const epfPFAmt=Math.round(Math.min(rate,epsWageCeil)*(epfPFpct/100));
     const epsBase=Math.min(rate,epsWageCeil);
     const epsAmt=Math.round(epsBase*(epsPct/100));
     const epfErAmt=epfPFAmt+epsAmt;
     const esicApply=rate<=esicWL;
     const esicEmpAmt=s.esicOvr!==undefined&&s.esicOvr!==''?Number(s.esicOvr):esicApply?Math.round(rate*((st.esicEmp??0.75)/100)):0;
     const esicErAmt=esicApply?Math.round(rate*((st.esicEr??3.25)/100)):0;
+    const mDedAmt=epfEmpAmt+epfErAmt+esicEmpAmt+esicErAmt;
+    const gross=Math.max(0,proBase-absDed-mDedAmt);
     const pA=adv.filter(a=>a.staffId===s.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);
     const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);
     const totalPending=pA+pC;
     const cutV=advCutMap[s.id];
     const advAmt=cutV!==undefined&&cutV!==''?Math.min(Math.max(0,parseFloat(cutV)||0),gross):Math.min(totalPending,gross);
     const net=Math.max(0,gross-advAmt);
-    const cpN=cpV; const margin=cpN-net;
+    const cpN=cpV; const margin=roundAmt(cpN-(Number(s.mRate)||0)+epfEmpAmt+epfErAmt,cfg.statutory);
     return{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,totalPending,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
   };
   const processOne=async(s)=>{
     const absV=getAbs(s.id), cpV=getCp(s.id,s);
     const{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calcSal(s,absV,cpV);
     const entry={id:uid(),sid:s.id,name:s.name,role:s.role,client:s.client||'',mon,yr,
-      abs:absV,mRate:s.mRate,mDed:s.mDed||0,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,
+      abs:absV,mRate:s.mRate,recPay:s.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,
       cp:cpN,margin,note:'',paid:true,joinWD:null,leftWD:null,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
     let newSal=[...sal,entry];
     let newAdv=[...adv], newChq=[...chq], rem=advAmt;
@@ -1210,7 +1226,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
       const absV=getAbs(s.id),cpV=getCp(s.id,s);
       const{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calcSal(s,absV,cpV);
       const entry={id:uid(),sid:s.id,name:s.name,role:s.role,client:s.client||'',mon,yr,
-        abs:absV,mRate:s.mRate,mDed:s.mDed||0,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,
+        abs:absV,mRate:s.mRate,recPay:s.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,
         cp:cpN,margin,note:'',paid:true,joinWD:null,leftWD:null,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
       curSal=[...curSal,entry];
       let rem=advAmt;
@@ -1303,11 +1319,11 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
             <div>
               <div style=${{fontSize:9,fontWeight:800,color:T.sub,letterSpacing:.6,marginBottom:4,fontFamily:AD}}>CLIENT ₹</div>
               <input type="number" min="0"
-                value=${cpMap[s.id]!==undefined?cpMap[s.id]:s.cRate||''}
+                value=${cpMap[s.id]!==undefined?cpMap[s.id]:chequeAmt(s.recPay,cfg.statutory)||''}
                 onChange=${e=>setCpMap(m=>({...m,[s.id]:e.target.value}))}
-                placeholder=${s.cRate||'0'}
+                placeholder=${chequeAmt(s.recPay,cfg.statutory)||'0'}
                 style=${{width:'100%',background:T.inBg,border:`1px solid ${T.bdr}`,borderRadius:7,color:T.txt,padding:'5px 8px',fontSize:13,fontWeight:700,fontFamily:MO,outline:'none'}}/>
-              ${s.cRate&&html`<div style=${{fontSize:9,color:T.sub,marginTop:2}}>std: ${fR(s.cRate)}</div>`}
+              ${s.recPay&&html`<div style=${{fontSize:9,color:T.sub,marginTop:2}}>cheque amt: ${fR(chequeAmt(s.recPay,cfg.statutory))}</div>`}
             </div>
             <!-- Breakdown -->
             <div style=${{background:T.bg,borderRadius:8,padding:'5px 8px'}}>
@@ -1416,37 +1432,36 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     setJoinWD(lwd?null:jwd); setLeftWD(lwd);
     const pA=adv.filter(a=>a.staffId===s.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);
     const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);
-    setAdvD(String(pA+pC));setCpV(s.cRate||'');};
+    setAdvD(String(pA+pC));setCpV(chequeAmt(s.recPay,cfg.statutory)||'');};
   const calc=(s,a,d2,wd)=>{
     const ab=Math.max(0,parseFloat(a)||0),pDay=Number(s.mRate)/FD;
     const effDays=wd||FD;
     const proBase=pDay*effDays;
     const absDed=pDay*Math.min(ab,effDays);
-    // mDed is actual deduction — EPF/ESIC display only
-    const mDedAmt=Number(s.mDed||0)*(effDays/FD);
-    const gross=Math.max(0,proBase-absDed-mDedAmt);
-    // EPF/ESIC — display only
+    // Deduction is now fully auto-calculated from statutory rates — no manual entry
     const st=cfg.statutory||{};
-    const rate=Number(s.mRate)||0;
+    const rate=Number(s.recPay)||0;
     const esicWL=st.esicWageLim??21000;
-    const epfEmpAmt=s.epfOvr!==undefined&&s.epfOvr!==''?Number(s.epfOvr):Math.round(rate*((st.epfEmp??12)/100));
+    const epfEmpAmt=Math.round((s.epfOvr!==undefined&&s.epfOvr!==''?Number(s.epfOvr):Math.round(rate*((st.epfEmp??12)/100)))*(effDays/FD));
     const epfPFpct=st.epfErPF??3.67, epsPct=st.epfErEPS??8.33;
     const epsWageCeil=st.epsWageCeil??15000;
-    const epfPFAmt=Math.round(rate*(epfPFpct/100));
+    const epfPFAmt=Math.round(Math.round(Math.min(rate,epsWageCeil)*(epfPFpct/100))*(effDays/FD));
     const epsBase=Math.min(rate,epsWageCeil);
-    const epsAmt=Math.round(epsBase*(epsPct/100));
+    const epsAmt=Math.round(Math.round(epsBase*(epsPct/100))*(effDays/FD));
     const epfErAmt=epfPFAmt+epsAmt;
     const esicApply=rate<=esicWL;
-    const esicEmpAmt=s.esicOvr!==undefined&&s.esicOvr!==''?Number(s.esicOvr):esicApply?Math.round(rate*((st.esicEmp??0.75)/100)):0;
-    const esicErAmt=esicApply?Math.round(rate*((st.esicEr??3.25)/100)):0;
+    const esicEmpAmt=Math.round((s.esicOvr!==undefined&&s.esicOvr!==''?Number(s.esicOvr):esicApply?Math.round(rate*((st.esicEmp??0.75)/100)):0)*(effDays/FD));
+    const esicErAmt=Math.round((esicApply?Math.round(rate*((st.esicEr??3.25)/100)):0)*(effDays/FD));
+    const mDedAmt=epfEmpAmt+epfErAmt+esicEmpAmt+esicErAmt;
+    const gross=Math.max(0,proBase-absDed-mDedAmt);
     const advAmt=Math.min(Math.max(0,Number(d2)||0),gross);
     const net=Math.max(0,gross-advAmt);
     return{pDay,absDed,gross,advAmt,net,proBase,effDays,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
   };
   const activeWD=leftWD||joinWD;
   const process=()=>{
-    if(!proc)return;const{pDay,absDed,gross,advAmt,net,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calc(proc,abs,advD,activeWD);const cpN=Number(cpV)||0,margin=cpN-net;
-    setSal([...sal,{id:uid(),sid:proc.id,name:proc.name,role:proc.role,client:proc.client||'',mon,yr,abs:parseFloat(abs)||0,mRate:proc.mRate,mDed:proc.mDed||0,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,cp:cpN,margin,note,paid:true,joinWD:joinWD||null,leftWD:leftWD||null,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}]);
+    if(!proc)return;const{pDay,absDed,gross,advAmt,net,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calc(proc,abs,advD,activeWD);const cpN=Number(cpV)||0,margin=roundAmt(cpN-(Number(proc.mRate)||0)+epfEmpAmt+epfErAmt,cfg.statutory);
+    setSal([...sal,{id:uid(),sid:proc.id,name:proc.name,role:proc.role,client:proc.client||'',mon,yr,abs:parseFloat(abs)||0,mRate:proc.mRate,recPay:proc.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,cp:cpN,margin,note,paid:true,joinWD:joinWD||null,leftWD:leftWD||null,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}]);
     let rem=advAmt;
     setChq(chq.map(c=>{if(c.staffId!==proc.id||c.status!=='pending'||rem<=0)return c;const tk=Math.min(rem,Number(c.expected||c.ret));rem-=tk;return tk>=(Number(c.expected||c.ret))?{...c,status:'settled',settledOn:today(),shortfall:0}:c;}));
     setAdv(adv.map(a=>{if(a.staffId!==proc.id||a.status!=='pending'||rem<=0)return a;const tk=Math.min(rem,Number(a.amount));rem-=tk;return tk>=Number(a.amount)?{...a,status:'deducted',dedOn:`${yr}-${String(mon).padStart(2,'0')}`}:{...a,amount:Number(a.amount)-tk,pNote:`₹${tk.toFixed(0)} deducted`};}));
@@ -1594,33 +1609,23 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
           <div style=${{background:T.bg,border:`1px solid ${T.red}30`,borderRadius:12,padding:12}}><div style=${{fontSize:10,fontWeight:800,color:T.red,marginBottom:9}}>2 · ADVANCE & CHEQUE DEDUCTION</div>
             ${(tPA>0||tPC>0)?html`<div>${tPA>0&&html`<div style=${{background:T.red+'14',borderRadius:8,padding:'7px 10px',marginBottom:7,display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:12,color:T.sub}}>Cash advances</span><span style=${{fontSize:12,fontWeight:800,color:T.red}}>${fR(tPA)}</span></div>`}${tPC>0&&html`<div style=${{background:T.yel+'14',borderRadius:8,padding:'7px 10px',marginBottom:7,display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:12,color:T.sub}}>Unsettled cheques</span><span style=${{fontSize:12,fontWeight:800,color:T.yel}}>${fR(tPC)}</span></div>`}<div style=${{background:T.red+'14',borderRadius:8,padding:'7px 10px',marginBottom:9,display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:12,color:T.sub,fontWeight:700}}>Total pending</span><span style=${{fontSize:13,fontWeight:900,color:T.red}}>${fR(tPA+tPC)}</span></div><${Inp} T=${T} label="Deduct this month — remaining carries forward" type="number" value=${advD} onChange=${e=>setAdvD(e.target.value)} placeholder="0"/>${Number(advD)>0&&Number(advD)<(tPA+tPC)&&html`<div style=${{marginTop:7,background:T.yel+'14',borderRadius:8,padding:'7px 10px',display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:11,color:T.sub}}>Carry forward</span><span style=${{fontSize:12,fontWeight:800,color:T.yel}}>${fR((tPA+tPC)-Number(advD))}</span></div>`}</div>`:html`<div style=${{fontSize:13,color:T.mut,textAlign:'center',padding:6}}>No pending dues ✓</div>`}
           </div>
-          <div style=${{background:T.bg,border:`1px solid ${T.blu}30`,borderRadius:12,padding:12}}><div style=${{fontSize:10,fontWeight:800,color:T.blu,marginBottom:9}}>3 · CLIENT PAYMENT</div><${Inp} T=${T} label="Amount received (₹)" type="number" value=${cpV} onChange=${e=>setCpV(e.target.value)} placeholder=${proc.cRate||'Enter amount'}/>${proc.cRate&&html`<div style=${{fontSize:11,color:T.sub,marginTop:5}}>Standard: ${fR(proc.cRate)}</div>`}</div>
+          <div style=${{background:T.bg,border:`1px solid ${T.blu}30`,borderRadius:12,padding:12}}><div style=${{fontSize:10,fontWeight:800,color:T.blu,marginBottom:9}}>3 · CLIENT PAYMENT</div><${Inp} T=${T} label="Amount received (₹)" type="number" value=${cpV} onChange=${e=>setCpV(e.target.value)} placeholder=${chequeAmt(proc.recPay,cfg.statutory)||'Enter amount'}/>${proc.recPay&&html`<div style=${{fontSize:11,color:T.sub,marginTop:5}}>Cheque Amount: ${fR(chequeAmt(proc.recPay,cfg.statutory))}</div>`}</div>
           <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:12,padding:13}}><div style=${{fontSize:10,fontWeight:800,color:T.sub,marginBottom:10}}>BREAKDOWN</div>
             ${isProRata?html`<${RR} T=${T} label=${'Pro-Rata Base ('+effDays+'÷30 × '+fR(proc.mRate)+')'} value=${fR(proBase.toFixed(2))} accent=${proRataReason==='left'?T.red:T.grn}/>`:html`<${RR} T=${T} label="Monthly Rate" value=${fR(proc.mRate)}/>`}<div style=${{height:5}}/>
             <${RR} T=${T} label=${'Absent ('+(parseFloat(abs)||0)+'×'+fR(Math.round(pDay))+')'} value=${'−'+fR(absDed.toFixed(2))} accent=${T.red}/>
             ${(()=>{
               const st2=cfg.statutory||{};
-              const rate2=Number(proc.mRate)||0;
-              const esicWL2=st2.esicWageLim??21000;
-              const epfEmp2=Math.round(rate2*((st2.epfEmp??12)/100));
-              const esicEmp2=rate2<=esicWL2?Math.round(rate2*((st2.esicEmp??0.75)/100)):0;
-              const epfPF2=Math.round(rate2*((st2.epfErPF??3.67)/100));
-              const eps2=Math.round(Math.min(rate2,st2.epsWageCeil??15000)*((st2.epfErEPS??8.33)/100));
-              const esicEr2=rate2<=esicWL2?Math.round(rate2*((st2.esicEr??3.25)/100)):0;
-              const totalStat2=epfEmp2+esicEmp2+epfPF2+eps2+esicEr2;
-              const other2=Math.max(0,mDedAmt-totalStat2);
               if(mDedAmt<=0)return null;
               const brows=[
-                ['EPF Employee ('+(st2.epfEmp??12)+'%)',epfEmp2,false],
-                ['EPF Employer ('+(st2.epfErPF??3.67)+'%)',epfPF2,true],
-                ['EPS Employer ('+(st2.epfErEPS??8.33)+'%)',eps2,true],
-                ...(esicEmp2>0?[['ESIC Employee ('+(st2.esicEmp??0.75)+'%)',esicEmp2,false]]:[]),
-                ...(esicEr2>0?[['ESIC Employer ('+(st2.esicEr??3.25)+'%)',esicEr2,true]]:[]),
-                ...(other2>0?[['Other Deduction',other2,false]]:[]),
+                ['EPF Employee ('+(st2.epfEmp??12)+'%)',epfEmpAmt,false],
+                ['EPF Employer ('+(st2.epfErPF??3.67)+'%)',epfPFAmt,true],
+                ['EPS Employer ('+(st2.epfErEPS??8.33)+'%)',epsAmt,true],
+                ...(esicEmpAmt>0?[['ESIC Employee ('+(st2.esicEmp??0.75)+'%)',esicEmpAmt,false]]:[]),
+                ...(esicErAmt>0?[['ESIC Employer ('+(st2.esicEr??3.25)+'%)',esicErAmt,true]]:[]),
               ];
               const browsTotal=mDedAmt;
               return html`<div style=${{background:T.bg,border:'1px solid '+T.bdr,borderRadius:9,padding:'7px 10px',margin:'4px 0'}}>
-                <div style=${{fontSize:9,fontWeight:800,color:T.sub,marginBottom:5}}>DEDUCTION BREAKDOWN</div>
+                <div style=${{fontSize:9,fontWeight:800,color:T.sub,marginBottom:5}}>DEDUCTION BREAKDOWN (based on Pay as per Record)</div>
                 ${brows.map(([l,v,isEr])=>html`<${RR} T=${T} label=${l} value=${'−'+fR(v)} accent=${isEr?T.pur:T.red}/>`)}
                 <div style=${{borderTop:'1px solid '+T.bdr,marginTop:5,paddingTop:5}}><${RR} T=${T} label="Total" value=${'−'+fR(browsTotal)}/></div>
               </div>`;
@@ -1628,8 +1633,8 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
             <${RR} T=${T} label="Gross" value=${fR(gross.toFixed(2))} bold border=${true}/>
             <${RR} T=${T} label="Deducted" value=${'−'+fR(advAmt.toFixed(2))} accent=${T.red}/>
             <${RR} T=${T} label="Net Salary" value=${fR(net.toFixed(2))} bold accent=${T.acc} border=${true}/>
-            ${cpN>0&&html`<div><${RR} T=${T} label="Client Paid" value=${fR(cpN)} accent=${T.blu}/><div style=${{height:5}}/><${RR} T=${T} label="Margin" value=${(cpN-net>=0?'+':'')+fR((cpN-net).toFixed(2))} bold accent=${cpN-net>=0?T.grn:T.red} border=${true}/></div>`}
-            ${cpN>0&&(cpN-net)>0&&html`<div style=${{marginTop:9,background:T.grn+'14',borderRadius:8,padding:'7px 10px',fontSize:11,fontWeight:700,color:T.txt}}>✓ Cheque return of ${fR(cpN-net)} auto-created</div>`}
+            ${cpN>0&&html`<div><${RR} T=${T} label="Client Paid" value=${fR(cpN)} accent=${T.blu}/><div style=${{height:5}}/><${RR} T=${T} label="Margin" value=${(roundAmt(cpN-(Number(proc.mRate)||0)+epfEmpAmt+epfErAmt,cfg.statutory)>=0?'+':'')+fR(roundAmt(cpN-(Number(proc.mRate)||0)+epfEmpAmt+epfErAmt,cfg.statutory))} bold accent=${roundAmt(cpN-(Number(proc.mRate)||0)+epfEmpAmt+epfErAmt,cfg.statutory)>=0?T.grn:T.red} border=${true}/></div>`}
+            ${cpN>0&&roundAmt(cpN-(Number(proc.mRate)||0)+epfEmpAmt+epfErAmt,cfg.statutory)>0&&html`<div style=${{marginTop:9,background:T.grn+'14',borderRadius:8,padding:'7px 10px',fontSize:11,fontWeight:700,color:T.txt}}>✓ Cheque return of ${fR(roundAmt(cpN-(Number(proc.mRate)||0)+epfEmpAmt+epfErAmt,cfg.statutory))} auto-created</div>`}
           </div>
           <${Inp} T=${T} label="Note (optional)" value=${note} onChange=${e=>setNote(e.target.value)} placeholder="sick leave, half day…"/>
           <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setProc(null)}/><${Btn} T=${T} full ch="Process & Pay" onClick=${process}/></div>
@@ -1899,12 +1904,12 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
     const effDays=e.leftWD||e.joinWD||FD2;
     const proBase=pDay*effDays;
     const absDed=pDay*Math.min(absN,effDays);
-    const mDedAmt=Number(e.mDed||0)*(effDays/FD2);
+    const mDedAmt=Number(e.mDedAmt||0);
     const gross=Math.max(0,proBase-absDed-mDedAmt);
     // keep original advDed (deductions already applied)
     const advDed=Number(e.advDed||0);
     const net=Math.max(0,gross-advDed);
-    const margin=cpN-net;
+    const margin=roundAmt(cpN-(Number(e.mRate)||0)+Number(e.epfEmpAmt||0)+Number(e.epfErAmt||0),cfg.statutory);
     const updatedSal={...e,abs:absN,pDay,absDed,gross,net,cp:cpN,margin,note:editSalForm.note,paid:editSalForm.paid,mDedAmt};
     setSal(sal.map(s=>s.id===e.id?updatedSal:s));
     // Recalculate future salary records of this staff (those that come AFTER this month)
@@ -2067,11 +2072,11 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
       const effDays=e.leftWD||e.joinWD||FD2;
       const proBase=pDay*effDays;
       const absDed=pDay*Math.min(absN,effDays);
-      const mDedAmt=Number(e.mDed||0)*(effDays/FD2);
+      const mDedAmt=Number(e.mDedAmt||0);
       const gross=Math.max(0,proBase-absDed-mDedAmt);
       const advDed=Number(e.advDed||0);
       const previewNet=Math.max(0,gross-advDed);
-      const previewMargin=cpN-previewNet;
+      const previewMargin=roundAmt(cpN-(Number(e.mRate)||0)+Number(e.epfEmpAmt||0)+Number(e.epfErAmt||0),cfg.statutory);
       return html`<${Mdl} title=${'✏️ Edit Salary — '+mName(e.mon,e.yr)} onClose=${()=>setEditSalEntry(null)} T=${T}>
         <div style=${{display:'flex',flexDirection:'column',gap:13}}>
           <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:11,padding:11}}>
@@ -2155,9 +2160,9 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
 function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg,setCfg,aFY,ctx}){
   const{T,catC,msg,fbSt,setFbSt,pCfg}=ctx;
   const[sec,setSec]=useState('general');
-  const blank={name:'',role:cats[0]||'Driver',mRate:'',cRate:'',client:'',phone:'',join:today(),leftDate:'',mDed:'',epfOvr:'',esicOvr:'',extraDed:'',inReport:true};
+  const blank={name:'',role:cats[0]||'Driver',mRate:'',recPay:'',client:'',phone:'',join:today(),leftDate:'',epfOvr:'',esicOvr:'',extraDed:'',inReport:true};
   const[showF,setShowF]=useState(false),[editId,setEditId]=useState(null),[form,setForm]=useState(blank);
-  const[ledger,setLedger]=useState(null),[q,setQ]=useState('');
+  const[ledger,setLedger]=useState(null),[q,setQ]=useState(''),[qCat,setQCat]=useState('ALL');
   const[nCat,setNCat]=useState(''),[eCI,setECI]=useState(null),[eCV,setECV]=useState('');
   const[nFY,setNFY]=useState('');
   const[delStaffId,setDelStaffId]=useState('');
@@ -2173,10 +2178,10 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
   const[prevBase,setPrevBase]=useState(15000);
   const[expCat,setExpCat]=useState('ALL');
   const openAdd=()=>{setEditId(null);setForm({...blank,role:cats[0]||'Driver'});setShowF(true);};
-  const openEdit=s=>{setEditId(s.id);setForm({name:s.name,role:s.role,mRate:s.mRate,cRate:s.cRate||'',client:s.client||'',phone:s.phone||'',join:s.join,leftDate:s.leftDate||'',mDed:s.mDed||'',epfOvr:s.epfOvr||'',esicOvr:s.esicOvr||'',extraDed:s.extraDed||'',inReport:s.inReport!==false});setShowF(true);};
+  const openEdit=s=>{setEditId(s.id);setForm({name:s.name,role:s.role,mRate:s.mRate,recPay:s.recPay||'',client:s.client||'',phone:s.phone||'',join:s.join,leftDate:s.leftDate||'',epfOvr:s.epfOvr||'',esicOvr:s.esicOvr||'',extraDed:s.extraDed||'',inReport:s.inReport!==false});setShowF(true);};
   const saveS=()=>{
     if(!form.name.trim()||!form.mRate)return msg('Fill name & salary','err');
-    const staffObj={...form,mDed:Number(form.mDed)||0};
+    const staffObj={...form};
     if(editId)setStaff(staff.map(s=>s.id===editId?{...s,...staffObj}:s));
     else setStaff([...staff,{id:uid(),...staffObj}]);
     msg(editId?'Updated':'Added');setShowF(false);
@@ -2210,7 +2215,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
   const doDelete=()=>{if(delTypes.sal)setSal([]);if(delTypes.adv)setAdv([]);if(delTypes.chq)setChq([]);setDelTypes({sal:false,adv:false,chq:false});setDelConfirm(false);msg('Deleted');};
   const doDeleteStaffBulk=()=>{const ids=[...delStaffIds];setStaff(staff.filter(s=>!ids.includes(s.id)));setSal(sal.filter(s=>!ids.includes(s.sid)));setAdv(adv.filter(a=>!ids.includes(a.staffId)));setChq(chq.filter(c=>!ids.includes(c.staffId)));setDelStaffIds(new Set());setDelConfirm(false);msg(ids.length+' staff and all their records deleted');};
   const clearAll=()=>{setStaff([]);setSal([]);setAdv([]);setChq([]);setCats(DEF_CATS);setCfg({theme:cfg.theme,fys:[],activeFY:null,fbcfg:cfg.fbcfg});setDelConfirm(false);msg('All data cleared');};
-  const fl=staff.filter(s=>[s.name,s.role,s.client||''].join(' ').toLowerCase().includes(q.toLowerCase()));
+  const fl=staff.filter(s=>(qCat==='ALL'||s.role===qCat)&&[s.name,s.role,s.client||''].join(' ').toLowerCase().includes(q.toLowerCase()));
   const SEC_GROUPS=[
     {g:'General',items:[{k:'general',l:'General',n:'sun'}]},
     {g:'Staff',items:[{k:'staff',l:'Staff',n:'ppl'}]},
@@ -2264,8 +2269,14 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
       </div>
     </div>`}
     ${sec==='staff'&&html`<div>
-      <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><div style=${{fontSize:14,fontWeight:800,color:T.txt}}>${staff.length} Members</div><${Btn} T=${T} sm ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="plus" s=${14} c="#fff"/>Add</span>`} onClick=${openAdd}/></div>
-      <div style=${{position:'relative',marginBottom:12}}><div style=${{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',pointerEvents:'none'}}><${Ico} n="srch" s=${13} c=${T.mut}/></div><input value=${q} onChange=${e=>setQ(e.target.value)} placeholder="Search…" style=${{...iSt(T),paddingLeft:30,fontSize:13}}/></div>
+      <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><div style=${{fontSize:14,fontWeight:800,color:T.txt}}>${fl.length} Members${qCat!=='ALL'?' · '+qCat:''}</div><${Btn} T=${T} sm ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="plus" s=${14} c="#fff"/>Add</span>`} onClick=${openAdd}/></div>
+      <div style=${{display:'flex',gap:8,marginBottom:12}}>
+        <div style=${{position:'relative',flex:1}}><div style=${{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',pointerEvents:'none'}}><${Ico} n="srch" s=${13} c=${T.mut}/></div><input value=${q} onChange=${e=>setQ(e.target.value)} placeholder="Search…" style=${{...iSt(T),paddingLeft:30,fontSize:13}}/></div>
+        <select value=${qCat} onChange=${e=>setQCat(e.target.value)} style=${{...iSt(T),flex:1,minWidth:100,appearance:'none',cursor:'pointer'}}>
+          <option value="ALL">All Categories</option>
+          ${cats.map(c=>html`<option key=${c} value=${c}>${c}</option>`)}
+        </select>
+      </div>
       ${fl.map(s=>{const pA=adv.filter(a=>a.staffId===s.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);const cc=catC(s.role);return html`<div key=${s.id} style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:13,padding:12,marginBottom:9}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
           <div style=${{flex:1,minWidth:0}}>
@@ -2282,8 +2293,16 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
           <div style=${{textAlign:'right',flexShrink:0,marginLeft:10}}>
             <div style=${{fontSize:10,color:T.sub}}>Monthly</div>
             <div style=${{fontSize:15,fontWeight:900,color:T.acc,fontFamily:"'Inter'"}}>${fR(s.mRate)}</div>
-            ${s.mDed&&Number(s.mDed)>0&&html`<div><div style=${{fontSize:10,color:T.sub,marginTop:3}}>Deduction</div><div style=${{fontSize:13,fontWeight:800,color:T.red,fontFamily:"'Inter'"}}>${fR(s.mDed)}/mo</div></div>`}
-            ${s.cRate&&html`<div><div style=${{fontSize:10,color:T.sub,marginTop:3}}>Client</div><div style=${{fontSize:13,fontWeight:800,color:T.blu,fontFamily:"'Inter'"}}>${fR(s.cRate)}</div><div style=${{fontSize:10,color:Number(s.cRate)-Number(s.mRate)>=0?T.grn:T.red}}>${Number(s.cRate)-Number(s.mRate)>=0?'+':''}${fR(Number(s.cRate)-Number(s.mRate))}</div></div>`}
+            ${s.recPay&&totalDeduction(s.recPay,cfg.statutory)>0&&html`<div><div style=${{fontSize:10,color:T.sub,marginTop:3}}>Deduction</div><div style=${{fontSize:13,fontWeight:800,color:T.red,fontFamily:"'Inter'"}}>${fR(totalDeduction(s.recPay,cfg.statutory))}/mo</div></div>`}
+            ${s.recPay&&(()=>{
+              const st=cfg.statutory||{};
+              const rate=Number(s.recPay)||0;
+              const epfEmpAmt=s.epfOvr!==undefined&&s.epfOvr!==''?Number(s.epfOvr):Math.round(rate*((st.epfEmp??12)/100));
+              const epfPFAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErPF??3.67)/100));
+              const epsAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErEPS??8.33)/100));
+              const marginV=roundAmt(chequeAmt(s.recPay,cfg.statutory)-Number(s.mRate)+epfEmpAmt+epfPFAmt+epsAmt,cfg.statutory);
+              return html`<div><div style=${{fontSize:10,color:T.sub,marginTop:3}}>Cheque Amt</div><div style=${{fontSize:13,fontWeight:800,color:T.blu,fontFamily:"'Inter'"}}>${fR(chequeAmt(s.recPay,cfg.statutory))}</div><div style=${{fontSize:10,color:marginV>=0?T.grn:T.red}}>${marginV>=0?'+':''}${fR(marginV)}</div></div>`;
+            })()}
             <div style=${{display:'flex',gap:5,marginTop:7,justifyContent:'flex-end'}}>
               <button onClick=${()=>setLedger(s)} style=${{background:T.blu+'14',border:'none',borderRadius:7,padding:5,cursor:'pointer'}}><${Ico} n="book" s=${13} c=${T.blu}/></button>
               <button onClick=${()=>openEdit(s)} style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:7,padding:5,cursor:'pointer'}}><${Ico} n="ed" s=${13} c=${T.sub}/></button>
@@ -2292,7 +2311,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
           </div>
         </div>
       </div>`;})}
-      ${!fl.length&&html`<div style=${{textAlign:'center',color:T.mut,padding:30}}>No staff</div>`}
+      ${!fl.length&&html`<div style=${{textAlign:'center',color:T.mut,padding:30}}>${qCat!=='ALL'?'No '+qCat+' staff':'No staff'}</div>`}
     </div>`}
     ${sec==='statutory'&&(()=>{
       const st=cfg.statutory||{};
@@ -2356,6 +2375,17 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
           </div>
         </div>
         <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
+          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
+            <div>
+              <div style=${{fontSize:11,fontWeight:800,color:T.blu,letterSpacing:.8,marginBottom:3}}>ROUND OFF CHEQUE AMOUNT</div>
+              <div style=${{fontSize:11,color:T.sub}}>Rounds Cheque Amount to nearest ₹5 (e.g. ₹14,079 → ₹14,080)</div>
+            </div>
+            <button onClick=${()=>{const ns={...cfg,statutory:{...st,roundOff10:!st.roundOff10}};setCfg(ns);}} style=${{flexShrink:0,width:44,height:26,borderRadius:20,border:'none',cursor:'pointer',background:st.roundOff10?T.grn:T.bdr2,position:'relative',transition:'background .15s'}}>
+              <span style=${{position:'absolute',top:3,left:st.roundOff10?21:3,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left .15s'}}/>
+            </button>
+          </div>
+        </div>
+        <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10,gap:10}}>
             <div style=${{fontSize:11,fontWeight:800,color:T.sub,letterSpacing:.8,whiteSpace:'nowrap'}}>LIVE PREVIEW AT</div>
             <div style=${{position:'relative',flex:1,maxWidth:150}}>
@@ -2366,8 +2396,8 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
           ${(()=>{
             const base=Number(prevBase)||0;
             const epfE=Math.round(base*(epfEmp/100));
-            const epfPF=Math.round(base*(epfErPF/100));
             const epsB=Math.min(base,epsWageCeil);
+            const epfPF=Math.round(epsB*(epfErPF/100));
             const eps=Math.round(epsB*(epfErEPS/100));
             const esicE=base<=esicWageLim?Math.round(base*(esicEmp/100)):0;
             const esicEr2=base<=esicWageLim?Math.round(base*(esicEr/100)):0;
@@ -2708,55 +2738,65 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
         <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:12,padding:12,display:'flex',flexDirection:'column',gap:12}}>
           <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8}}>SALARY & CLIENT</div>
           <${Inp} T=${T} label="Monthly Salary (₹) *" type="number" value=${form.mRate} onChange=${e=>setForm({...form,mRate:e.target.value})} placeholder="What you pay"/>
-          <${Inp} T=${T} label="Monthly Deduction (₹)" type="number" value=${form.mDed} onChange=${e=>setForm({...form,mDed:e.target.value})} placeholder="Total deduction incl. EPF, ESIC etc."/>
-          ${(()=>{
-            const st=cfg.statutory||{};
-            const rate=Number(form.mRate)||0;
-            const mDedN=Number(form.mDed)||0;
-            if(!rate||!mDedN)return null;
-            const esicWL=st.esicWageLim??21000;
-            // Employee contributions
-            const epfEmpAmt=Math.round(rate*((st.epfEmp??12)/100));
-            const esicEmpAmt=rate<=esicWL?Math.round(rate*((st.esicEmp??0.75)/100)):0;
-            // Employer contributions
-            const epfPFAmt=Math.round(rate*((st.epfErPF??3.67)/100));
-            const epsAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErEPS??8.33)/100));
-            const esicErAmt=rate<=esicWL?Math.round(rate*((st.esicEr??3.25)/100)):0;
-            const totalStatutory=epfEmpAmt+esicEmpAmt+epfPFAmt+epsAmt+esicErAmt;
-            const otherDed=Math.max(0,mDedN-totalStatutory);
-            const netPay=rate-mDedN;
-            const rows=[
-              ['EPF Employee ('+(st.epfEmp??12)+'%)',epfEmpAmt],
-              ['EPF Employer ('+(st.epfErPF??3.67)+'%)',epfPFAmt],
-              ['EPS Employer ('+(st.epfErEPS??8.33)+'%)',epsAmt],
-              ...(esicEmpAmt>0?[['ESIC Employee ('+(st.esicEmp??0.75)+'%)',esicEmpAmt]]:[]),
-              ...(esicErAmt>0?[['ESIC Employer ('+(st.esicEr??3.25)+'%)',esicErAmt]]:[]),
-              ...(otherDed>0?[['Other Deduction',otherDed]]:[]),
-            ];
-            return html`<div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:11,padding:'10px 12px'}}>
-              <div style=${{fontSize:9,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:8}}>DEDUCTION BREAKDOWN</div>
-              ${rows.map(([lbl,amt])=>html`<div style=${{display:'flex',justifyContent:'space-between',marginBottom:5}}>
-                <span style=${{fontSize:11,color:T.sub}}>${lbl}</span>
-                <span style=${{fontSize:11,fontWeight:800,color:T.txt,fontFamily:"'Inter'"}}>${fR(amt)}</span>
-              </div>`)}
-              <div style=${{display:'flex',justifyContent:'space-between',paddingTop:6,borderTop:`1px solid ${T.bdr}`,marginTop:2}}>
-                <span style=${{fontSize:11,fontWeight:800,color:T.red}}>Total Deduction</span>
-                <span style=${{fontSize:13,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(mDedN)}</span>
-              </div>
-              <div style=${{display:'flex',justifyContent:'space-between',paddingTop:5,marginTop:4,borderTop:`1px solid ${T.bdr}`}}>
-                <span style=${{fontSize:11,fontWeight:800,color:T.grn}}>Net to Staff</span>
-                <span style=${{fontSize:13,fontWeight:900,color:T.grn,fontFamily:"'Inter'"}}>${fR(netPay)}</span>
-              </div>
-            </div>`;
-          })()}
           <div style=${{display:'flex',flexDirection:'column',gap:5}}>
             <label style=${{fontSize:11,color:T.sub,fontWeight:800}}>Punched At (Client)</label>
             <datalist id=${dlId}>${exC.map(c=>html`<option key=${c} value=${c}/>`)}</datalist>
             <input list=${dlId} value=${form.client} onChange=${e=>setForm({...form,client:e.target.value})} placeholder=${exC.length>0?'Select or type…':'e.g. ABC Pvt. Ltd.'} style=${iSt(T)} onFocus=${e=>e.target.style.borderColor=T.acc} onBlur=${e=>e.target.style.borderColor=T.bdr}/>
             ${exC.length>0&&html`<div style=${{display:'flex',gap:6,flexWrap:'wrap',marginTop:2}}>${exC.map(c=>html`<button key=${c} onClick=${()=>setForm({...form,client:c})} style=${{background:form.client===c?T.accS:T.card,border:`1px solid ${form.client===c?T.accB:T.bdr}`,color:form.client===c?T.acc:T.sub,borderRadius:20,padding:'4px 11px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>${c}</button>`)}</div>`}
           </div>
-          <${Inp} T=${T} label="Client Monthly Rate (₹)" type="number" value=${form.cRate} onChange=${e=>setForm({...form,cRate:e.target.value})} placeholder="What client pays"/>
-          ${form.mRate&&form.cRate&&html`<div style=${{background:Number(form.cRate)>=Number(form.mRate)?T.grn+'14':T.red+'14',borderRadius:8,padding:'6px 10px',fontSize:12,color:Number(form.cRate)>=Number(form.mRate)?T.grn:T.red,fontWeight:800}}>Margin: ${fR(Number(form.cRate)-Number(form.mRate))}/mo</div>`}
+          <${Inp} T=${T} label="Pay as per Record (₹)" type="number" value=${form.recPay} onChange=${e=>setForm({...form,recPay:e.target.value})} placeholder="Statutory/record salary"/>
+          ${form.recPay&&html`<div style=${{background:T.blu+'14',borderRadius:8,padding:'6px 10px',fontSize:12,color:T.blu,fontWeight:800}}>Cheque Amount (Record − Employer EPF/EPS/ESIC): ${fR(chequeAmt(form.recPay,cfg.statutory))}/mo</div>`}
+          ${form.mRate&&form.recPay&&(()=>{
+            const st=cfg.statutory||{};
+            const rate=Number(form.recPay)||0;
+            const epfEmpAmt=form.epfOvr!==undefined&&form.epfOvr!==''?Number(form.epfOvr):Math.round(rate*((st.epfEmp??12)/100));
+            const epfPFAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErPF??3.67)/100));
+            const epsAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErEPS??8.33)/100));
+            const marginV=roundAmt(chequeAmt(form.recPay,cfg.statutory)-Number(form.mRate)+epfEmpAmt+epfPFAmt+epsAmt,cfg.statutory);
+            return html`<div style=${{background:marginV>=0?T.grn+'14':T.red+'14',borderRadius:8,padding:'6px 10px',fontSize:12,color:marginV>=0?T.grn:T.red,fontWeight:800}}>Margin (Cheque Amount − Actual Pay + EPF Employee + EPF Employer + EPS Employer): ${fR(marginV)}/mo</div>`;
+          })()}
+          ${(()=>{
+            const st=cfg.statutory||{};
+            const rate=Number(form.recPay)||0;
+            if(!rate)return null;
+            const esicWL=st.esicWageLim??21000;
+            // Employee contributions
+            const epfEmpAmt=form.epfOvr!==undefined&&form.epfOvr!==''?Number(form.epfOvr):Math.round(rate*((st.epfEmp??12)/100));
+            const esicEmpAmt=form.esicOvr!==undefined&&form.esicOvr!==''?Number(form.esicOvr):rate<=esicWL?Math.round(rate*((st.esicEmp??0.75)/100)):0;
+            // Employer contributions
+            const epfPFAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErPF??3.67)/100));
+            const epsAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErEPS??8.33)/100));
+            const esicErAmt=rate<=esicWL?Math.round(rate*((st.esicEr??3.25)/100)):0;
+            const mDedN=epfEmpAmt+esicEmpAmt+epfPFAmt+epsAmt+esicErAmt;
+            const empTotal=epfEmpAmt+esicEmpAmt;
+            const erTotal=epfPFAmt+epsAmt+esicErAmt;
+            const rows=[
+              ['EPF Employee ('+(st.epfEmp??12)+'%)',epfEmpAmt],
+              ['EPF Employer ('+(st.epfErPF??3.67)+'%)',epfPFAmt],
+              ['EPS Employer ('+(st.epfErEPS??8.33)+'%)',epsAmt],
+              ...(esicEmpAmt>0?[['ESIC Employee ('+(st.esicEmp??0.75)+'%)',esicEmpAmt]]:[]),
+              ...(esicErAmt>0?[['ESIC Employer ('+(st.esicEr??3.25)+'%)',esicErAmt]]:[]),
+            ];
+            return html`<div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:11,padding:'10px 12px'}}>
+              <div style=${{fontSize:9,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:8}}>DEDUCTION BREAKDOWN (auto-calculated, based on Pay as per Record)</div>
+              ${rows.map(([lbl,amt])=>html`<div style=${{display:'flex',justifyContent:'space-between',marginBottom:5}}>
+                <span style=${{fontSize:11,color:T.sub}}>${lbl}</span>
+                <span style=${{fontSize:11,fontWeight:800,color:T.txt,fontFamily:"'Inter'"}}>${fR(amt)}</span>
+              </div>`)}
+              <div style=${{display:'flex',justifyContent:'space-between',paddingTop:6,borderTop:`1px solid ${T.bdr}`,marginTop:2}}>
+                <span style=${{fontSize:11,fontWeight:800,color:T.txt}}>Employee Total</span>
+                <span style=${{fontSize:12,fontWeight:900,color:T.txt,fontFamily:"'Inter'"}}>${fR(empTotal)}</span>
+              </div>
+              <div style=${{display:'flex',justifyContent:'space-between',marginTop:3}}>
+                <span style=${{fontSize:11,fontWeight:800,color:T.txt}}>Employer Total</span>
+                <span style=${{fontSize:12,fontWeight:900,color:T.txt,fontFamily:"'Inter'"}}>${fR(erTotal)}</span>
+              </div>
+              <div style=${{display:'flex',justifyContent:'space-between',paddingTop:5,marginTop:4,borderTop:`1px solid ${T.bdr}`}}>
+                <span style=${{fontSize:11,fontWeight:800,color:T.red}}>Total Deduction</span>
+                <span style=${{fontSize:13,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(mDedN)}</span>
+              </div>
+            </div>`;
+          })()}
         </div>
         <${Inp} T=${T} label="Phone" value=${form.phone} onChange=${e=>setForm({...form,phone:e.target.value})} placeholder="9876543210"/>
         <${Inp} T=${T} label="Joining Date" type="date" value=${form.join} onChange=${e=>setForm({...form,join:e.target.value})}/>
