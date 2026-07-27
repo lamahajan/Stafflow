@@ -1618,11 +1618,11 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
                 ...(esicEr2>0?[['ESIC Employer ('+(st2.esicEr??3.25)+'%)',esicEr2,true]]:[]),
                 ...(other2>0?[['Other Deduction',other2,false]]:[]),
               ];
-              const browsTotal=brows.reduce((s,[,v])=>s+v,0);
+              const browsTotal=mDedAmt;
               return html`<div style=${{background:T.bg,border:'1px solid '+T.bdr,borderRadius:9,padding:'7px 10px',margin:'4px 0'}}>
                 <div style=${{fontSize:9,fontWeight:800,color:T.sub,marginBottom:5}}>DEDUCTION BREAKDOWN</div>
                 ${brows.map(([l,v,isEr])=>html`<${RR} T=${T} label=${l} value=${'−'+fR(v)} accent=${isEr?T.pur:T.red}/>`)}
-                <div style=${{borderTop:'1px solid '+T.bdr,marginTop:5,paddingTop:5}}><${RR} T=${T} label="Total" value=${'−'+fR(browsTotal)} bold=${true}/></div>
+                <div style=${{borderTop:'1px solid '+T.bdr,marginTop:5,paddingTop:5}}><${RR} T=${T} label="Total" value=${'−'+fR(browsTotal)}/></div>
               </div>`;
             })()}
             <${RR} T=${T} label="Gross" value=${fR(gross.toFixed(2))} bold border=${true}/>
