@@ -341,7 +341,7 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
   const W=148, H=210;
   // Slip prints at a fixed 72x118mm size, top-centre on an A4 sheet (e.g. for gate-pass-card stock)
   const realDoc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-  const SLIP_W=72, SLIP_H=118, TOP_MARGIN=10;
+  const SLIP_W=72, SLIP_H=118, TOP_MARGIN=2.54; // 0.1" top margin
   const SCALE=Math.min(SLIP_W/W, SLIP_H/H);
   const OFF_X=(realDoc.internal.pageSize.getWidth()-W*SCALE)/2, OFF_Y=TOP_MARGIN;
   const sx=v=>OFF_X+v*SCALE, sy=v=>OFF_Y+v*SCALE;
