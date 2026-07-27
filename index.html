@@ -2270,13 +2270,19 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
     </div>`}
     ${sec==='staff'&&html`<div>
       <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><div style=${{fontSize:14,fontWeight:800,color:T.txt}}>${fl.length} Members${qCat!=='ALL'?' · '+qCat:''}</div><${Btn} T=${T} sm ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="plus" s=${14} c="#fff"/>Add</span>`} onClick=${openAdd}/></div>
-      <div style=${{display:'flex',gap:8,marginBottom:12}}>
-        <div style=${{position:'relative',flex:1}}><div style=${{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',pointerEvents:'none'}}><${Ico} n="srch" s=${13} c=${T.mut}/></div><input value=${q} onChange=${e=>setQ(e.target.value)} placeholder="Search…" style=${{...iSt(T),paddingLeft:30,fontSize:13}}/></div>
-        <select value=${qCat} onChange=${e=>setQCat(e.target.value)} style=${{...iSt(T),flex:1,minWidth:100,appearance:'none',cursor:'pointer'}}>
-          <option value="ALL">All Categories</option>
-          ${cats.map(c=>html`<option key=${c} value=${c}>${c}</option>`)}
-        </select>
+      <div style=${{display:'flex',gap:6,marginBottom:12,overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:2}}>
+        ${[{k:'ALL',l:'All'},...cats.map(c=>({k:c,l:c}))].map(({k,l})=>{
+          const cnt=k==='ALL'?staff.length:staff.filter(s=>s.role===k).length;
+          const ac=qCat===k;
+          const cc=k==='ALL'?T.acc:CC[cats.indexOf(k)%CC.length]||T.acc;
+          return html`<button key=${k} onClick=${()=>setQCat(k)} style=${{background:ac?cc+'22':T.card,border:`1px solid ${ac?cc+'66':T.bdr}`,color:ac?cc:T.sub,borderRadius:20,padding:'5px 12px',fontSize:12,fontWeight:800,cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:5,flexShrink:0}}>
+            ${k!=='ALL'&&html`<span style=${{width:6,height:6,borderRadius:'50%',background:ac?cc:T.mut,display:'inline-block',flexShrink:0}}/>`}
+            ${l}
+            <span style=${{background:ac?cc+'33':T.bdr,color:ac?cc:T.mut,borderRadius:20,padding:'1px 6px',fontSize:10,fontWeight:900}}>${cnt}</span>
+          </button>`;
+        })}
       </div>
+      <div style=${{position:'relative',marginBottom:12}}><div style=${{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',pointerEvents:'none'}}><${Ico} n="srch" s=${13} c=${T.mut}/></div><input value=${q} onChange=${e=>setQ(e.target.value)} placeholder="Search…" style=${{...iSt(T),paddingLeft:30,fontSize:13}}/></div>
       ${fl.map(s=>{const pA=adv.filter(a=>a.staffId===s.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);const cc=catC(s.role);return html`<div key=${s.id} style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:13,padding:12,marginBottom:9}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
           <div style=${{flex:1,minWidth:0}}>
