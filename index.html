@@ -456,9 +456,9 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
     if(mDed===0){ yD=drawRow(rightX,yD,'No Deductions','Nil'); }
     else{
       if(epfE>0) yD=drawRow(rightX,yD,'EPF Employee ('+(st.epfEmp??12)+'%)','- '+fmt(epfE));
-      if(esicE>0) yD=drawRow(rightX,yD,'ESIC Employee ('+(st.esicEmp??0.75)+'%)','- '+fmt(esicE));
       if(epfPFslip>0) yD=drawRow(rightX,yD,'EPF Employer ('+(st.epfErPF??3.67)+'%)','- '+fmt(epfPFslip));
       if(epsSlip>0) yD=drawRow(rightX,yD,'EPS Employer ('+(st.epfErEPS??8.33)+'%)','- '+fmt(epsSlip));
+      if(esicE>0) yD=drawRow(rightX,yD,'ESIC Employee ('+(st.esicEmp??0.75)+'%)','- '+fmt(esicE));
       if(esicErSlip>0) yD=drawRow(rightX,yD,'ESIC Employer ('+(st.esicEr??3.25)+'%)','- '+fmt(esicErSlip));
       if(otherSlip>0) yD=drawRow(rightX,yD,'Other Deduction','- '+fmt(otherSlip));
     }
@@ -567,9 +567,9 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
   if(mDed===0){ yD=drawRow(rightX,yD,'No Deductions','Nil'); }
   else{
     if(epfE>0) yD=drawRow(rightX,yD,'EPF Employee ('+(st.epfEmp??12)+'%)','- '+fmt(epfE));
-    if(esicE>0) yD=drawRow(rightX,yD,'ESIC Employee ('+(st.esicEmp??0.75)+'%)','- '+fmt(esicE));
     if(epfPFslip>0) yD=drawRow(rightX,yD,'EPF Employer ('+(st.epfErPF??3.67)+'%)','- '+fmt(epfPFslip));
     if(epsSlip>0) yD=drawRow(rightX,yD,'EPS Employer ('+(st.epfErEPS??8.33)+'%)','- '+fmt(epsSlip));
+    if(esicE>0) yD=drawRow(rightX,yD,'ESIC Employee ('+(st.esicEmp??0.75)+'%)','- '+fmt(esicE));
     if(esicErSlip>0) yD=drawRow(rightX,yD,'ESIC Employer ('+(st.esicEr??3.25)+'%)','- '+fmt(esicErSlip));
     if(otherSlip>0) yD=drawRow(rightX,yD,'Other Deduction','- '+fmt(otherSlip));
   }
@@ -1612,15 +1612,17 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
               if(mDedAmt<=0)return null;
               const brows=[
                 ['EPF Employee ('+(st2.epfEmp??12)+'%)',epfEmp2,false],
-                ...(esicEmp2>0?[['ESIC Employee ('+(st2.esicEmp??0.75)+'%)',esicEmp2,false]]:[]),
                 ['EPF Employer ('+(st2.epfErPF??3.67)+'%)',epfPF2,true],
                 ['EPS Employer ('+(st2.epfErEPS??8.33)+'%)',eps2,true],
+                ...(esicEmp2>0?[['ESIC Employee ('+(st2.esicEmp??0.75)+'%)',esicEmp2,false]]:[]),
                 ...(esicEr2>0?[['ESIC Employer ('+(st2.esicEr??3.25)+'%)',esicEr2,true]]:[]),
                 ...(other2>0?[['Other Deduction',other2,false]]:[]),
               ];
+              const browsTotal=brows.reduce((s,[,v])=>s+v,0);
               return html`<div style=${{background:T.bg,border:'1px solid '+T.bdr,borderRadius:9,padding:'7px 10px',margin:'4px 0'}}>
                 <div style=${{fontSize:9,fontWeight:800,color:T.sub,marginBottom:5}}>DEDUCTION BREAKDOWN</div>
                 ${brows.map(([l,v,isEr])=>html`<${RR} T=${T} label=${l} value=${'−'+fR(v)} accent=${isEr?T.pur:T.red}/>`)}
+                <div style=${{borderTop:'1px solid '+T.bdr,marginTop:5,paddingTop:5}}><${RR} T=${T} label="Total" value=${'−'+fR(browsTotal)} bold=${true}/></div>
               </div>`;
             })()}
             <${RR} T=${T} label="Gross" value=${fR(gross.toFixed(2))} bold border=${true}/>
@@ -2725,9 +2727,9 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
             const netPay=rate-mDedN;
             const rows=[
               ['EPF Employee ('+(st.epfEmp??12)+'%)',epfEmpAmt],
-              ...(esicEmpAmt>0?[['ESIC Employee ('+(st.esicEmp??0.75)+'%)',esicEmpAmt]]:[]),
               ['EPF Employer ('+(st.epfErPF??3.67)+'%)',epfPFAmt],
               ['EPS Employer ('+(st.epfErEPS??8.33)+'%)',epsAmt],
+              ...(esicEmpAmt>0?[['ESIC Employee ('+(st.esicEmp??0.75)+'%)',esicEmpAmt]]:[]),
               ...(esicErAmt>0?[['ESIC Employer ('+(st.esicEr??3.25)+'%)',esicErAmt]]:[]),
               ...(otherDed>0?[['Other Deduction',otherDed]]:[]),
             ];
