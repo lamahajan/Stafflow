@@ -165,6 +165,151 @@ const totalDeduction=(recPay,st)=>{
   return epfEmpAmt+epfPFAmt+epsAmt+esicEmpAmt+esicErAmt;
 };
 // Cheque Amount = Pay as per Record minus EPF Employer (3.67%) minus EPS Employer (8.33%), both capped at the EPS wage ceiling, minus ESIC Employee (0.75%, if within the ESIC wage limit).
+const roundAmt=(amt,st)=>{const n=Number(amt)||0;return (st&&st.roundOff10)?Math.round(n/10)*10:n;};
+// Per-category margin rule: 'full' (default) adds back EPF Employee+Employer+EPS Employer; 'simple' does not.
+const marginAddOn=(role,epfEmpAmt,epfErAmt,cfg)=>{
+  const mode=((cfg&&cfg.catMarginMode)||{})[role];
+  return mode==='simple'?0:(Number(epfEmpAmt)||0)+(Number(epfErAmt)||0);
+};
+const chequeAmt=(recPay,st)=>{
+  st=st||{};
+  const rp=Number(recPay)||0;
+  const epsWageCeil=st.epsWageCeil??15000;
+  const esicWageLim=st.esicWageLim??21000;
+  const capBase=Math.min(rp,epsWageCeil);
+  const epfPFAmt=Math.round(capBase*((st.epfErPF??3.67)/100));
+  const epsAmt=Math.round(capBase*((st.epfErEPS??8.33)/100));
+  const esicEmpAmt=rp<=esicWageLim?Math.round(rp*((st.esicEmp??0.75)/100)):0;
+  let amt=Math.max(0,Math.round(rp-epfPFAmt-epsAmt-esicEmpAmt));
+  if(st.roundOff10)amt=Math.round(amt/10)*10;
+  return amt;
+};
+const mName=(m,y)=>new Date(y,m-1,1).toLocaleString('en-IN',{month:'long',year:'numeric'});
+const FD=30;
+const getFY=d=>{const x=new Date(d||Date.now());return x.getMonth()>=3?x.getFullYear():x.getFullYear()-1;};
+const fyLbl=fy=>`FY ${fy}-${String(fy+1).slice(2)}`;
+const inFY=(mon,yr,fy)=>(yr===fy&&mon>=4)||(yr===fy+1&&mon<=3);
+const K={staff:'sf8_s',adv:'sf8_a',sal:'sf8_sl',chq:'sf8_c',cats:'sf8_ct',cfg:'sf8_cfg'};
+let _db=null;
+const initFB=async fbcfg=>{
+  if(!fbcfg?.apiKey||!fbcfg?.databaseURL)return false;
+  try{
+    if(!window.firebase){
+      await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+      await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+    }
+    const ex=window.firebase.apps?.find(a=>a.name==='sf');
+    const app=ex||window.firebase.initializeApp(fbcfg,'sf');
+    _db=window.firebase.database(app);return true;
+  }catch(e){console.error(e);return false;}
+};
+const ld=async k=>{try{if(_db){const s=await _db.ref('sf8/'+k).once('value');if(s.val()!==null)return s.val();}const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
+const sv=async(k,d)=>{try{localStorage.setItem(k,JSON.stringify(d));if(_db)_db.ref('sf8/'+k).set(d);}catch{}};
+const TH={
+  dark:{bg:'#0D0F14',surf:'#13161D',card:'#181B24',bdr:'#1E2130',bdr2:'#2A2E42',txt:'#F1F2F6',sub:'#9DA3B4',mut:'#4B5270',acc:'#0071e3',accAlt:'#0064cc',accS:'rgba(0,113,227,.13)',accB:'rgba(0,113,227,.3)',grn:'#10B981',red:'#EF4444',blu:'#3B82F6',yel:'#F59E0B',pur:'#A855F7',inBg:'#1A1D26'},
+  light:{bg:'#f2f2f7',surf:'rgba(255,255,255,0.85)',card:'#ffffff',bdr:'rgba(0,0,0,0.08)',bdr2:'rgba(0,0,0,0.05)',txt:'#1d1d1f',sub:'#6e6e73',mut:'#86868b',acc:'#0071e3',accAlt:'#0064cc',accS:'rgba(0,113,227,0.08)',accB:'rgba(0,113,227,0.3)',grn:'#34c759',red:'#ff3b30',blu:'#0071e3',yel:'#ff9f0a',pur:'#8B5CF6',inBg:'#ffffff'},
+};
+const CC=['#8B5CF6','#10B981','#3B82F6','#F59E0B','#EF4444','#06B6D4','#EC4899','#6366F1','#14B8A6','#F97316'];
+const DEF_CATS=['Driver','Cleaner','Security','Gardner','Helper','Supervisor','Other'];
+const Ico=({n,s=20,c='currentColor'})=>{
+  const p={fill:'none',stroke:c,strokeWidth:'2',width:s,height:s,viewBox:'0 0 24 24'};
+  const b={...p,strokeWidth:'2.5'};
+  const d={
+    grid:html`<svg ...${p}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>`,
+    ppl:html`<svg ...${p}><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.87"/></svg>`,
+    card:html`<svg ...${p}><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>`,
+    dlr:html`<svg ...${p}><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`,
+    chk:html`<svg ...${p}><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
+    set:html`<svg ...${p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+    plus:html`<svg ...${b}><path d="M12 5v14M5 12h14"/></svg>`,
+    ed:html`<svg ...${p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
+    tr:html`<svg ...${p}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`,
+    x:html`<svg ...${b}><path d="M18 6L6 18M6 6l12 12"/></svg>`,
+    info:html`<svg ...${p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+    bld:html`<svg ...${p}><path d="M3 21h18M3 7l9-4 9 4M4 7v14M20 7v14M9 21v-4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v4"/></svg>`,
+    book:html`<svg ...${p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`,
+    warn:html`<svg ...${p}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/></svg>`,
+    sun:html`<svg ...${p}><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>`,
+    moon:html`<svg ...${p}><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`,
+    srch:html`<svg ...${p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+    pdf:html`<svg ...${p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`,
+    tag:html`<svg ...${p}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/></svg>`,
+    cal:html`<svg ...${p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+    dn:html`<svg ...${p}><polyline points="6 9 12 15 18 9"/></svg>`,
+    up:html`<svg ...${p}><polyline points="18 15 12 9 6 15"/></svg>`,
+    sync:html`<svg ...${p}><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
+    pct:html`<svg ...${p}><circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><line x1="5" y1="19" x2="19" y2="5"/></svg>`,
+    xls:html`<svg ...${p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
+  };
+  return d[n]||null;
+};
+const iSt=T=>({background:T.inBg,border:`1px solid ${T.bdr}`,borderRadius:14,color:T.txt,padding:'11px 14px',fontSize:14,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit'});
+const Badge=({role,T,cats})=>{const c=CC[cats.indexOf(role)%CC.length]||T.acc;return html`<span style=${{background:'transparent',color:c,border:`1.3px solid ${c}66`,padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:800}}>${role}</span>`;};
+const SC=({label,value,sub,accent,icon,T})=>html`<div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:18,padding:14,boxShadow:'0 1px 8px rgba(0,0,0,0.04)',display:'flex',flexDirection:'column',gap:5,flex:1,minWidth:0}}><div style=${{display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:9,color:T.sub,fontWeight:800,letterSpacing:.8,textTransform:'uppercase'}}>${label}</span>${icon&&html`<${Ico} n=${icon} s=${13} c=${accent}/>`}</div><span style=${{fontSize:19,fontWeight:900,color:accent,fontFamily:"'Inter'",letterSpacing:-.5}}>${value}</span>${sub&&html`<span style=${{fontSize:10,color:T.mut}}>${sub}</span>`}</div>`;
+const Inp=({label,T,...p})=>html`<div style=${{display:'flex',flexDirection:'column',gap:5}}>${label&&html`<label style=${{fontSize:11,color:T.sub,fontWeight:800}}>${label}</label>`}<input ...${p} style=${iSt(T)} onFocus=${e=>e.target.style.borderColor=T.acc} onBlur=${e=>e.target.style.borderColor=T.bdr}/></div>`;
+const Sel=({label,options,T,...p})=>html`<div style=${{display:'flex',flexDirection:'column',gap:5}}>${label&&html`<label style=${{fontSize:11,color:T.sub,fontWeight:800}}>${label}</label>`}<select ...${p} style=${{...iSt(T),appearance:'none',cursor:'pointer'}}>${options.map(o=>html`<option key=${o.value??o} value=${o.value??o}>${o.label??o}</option>`)}</select></div>`;
+const Btn=({ch,v='pri',full,sm,T,onClick,style:st,disabled})=>{
+  const bg=v==='pri'?`linear-gradient(135deg,${T.acc},${T.accAlt})`:v==='danger'?T.red+'22':T.card;
+  const cl=v==='pri'?'#fff':v==='danger'?T.red:T.txt;
+  const br=v==='sec'?`1px solid ${T.bdr}`:v==='danger'?`1px solid ${T.red}33`:'none';
+  const sh=v==='pri'?'0 2px 12px rgba(0,113,227,0.28)':'none';
+  return html`<button onClick=${onClick} disabled=${disabled} style=${{background:bg,color:cl,border:br,borderRadius:980,padding:sm?'7px 16px':'11px 20px',fontSize:sm?13:14,fontWeight:700,cursor:disabled?'not-allowed':'pointer',width:full?'100%':'auto',fontFamily:'inherit',opacity:disabled?.5:1,boxShadow:sh,letterSpacing:'-0.01em',...(st||{})}}>${ch}</button>`;
+};
+const Mdl=({title,onClose,T,children})=>html`<div style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.4)',zIndex:100,display:'flex',alignItems:'flex-end',backdropFilter:'blur(4px)'}} onClick=${onClose}><div style=${{background:T.card,borderRadius:'24px 24px 0 0',width:'100%',padding:'22px 16px 32px',maxHeight:'92vh',overflowY:'auto',border:`1px solid ${T.bdr}`,boxShadow:'0 -4px 30px rgba(0,0,0,0.12)'}} onClick=${e=>e.stopPropagation()}><div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}><span style=${{fontSize:17,fontWeight:900,color:T.txt}}>${title}</span><button onClick=$  ALL_KEYS.forEach(k=>{const v=localStorage.getItem(k);if(v)data[k]=v;});
+  data._backupDate=new Date().toISOString();
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  const dt=new Date().toISOString().slice(0,10);
+  a.download='StaffFlow_Backup_'+dt+'.json';a.click();
+  if(msg)msg('✅ Full backup downloaded!');
+}
+function sfRestoreAll(msg){
+  const inp=document.createElement('input');inp.type='file';inp.accept='.json';
+  inp.onchange=async e=>{
+    try{
+      const text=await e.target.files[0].text();
+      const data=JSON.parse(text);
+      if(!confirm('⚠️ This will REPLACE all your current data. Are you sure?'))return;
+      ALL_KEYS.forEach(k=>{if(data[k]!==undefined)localStorage.setItem(k,data[k]);});
+      if(msg)msg('✅ Data restore ho gaya! Reloading…','inf');
+      setTimeout(()=>location.reload(),1200);
+    }catch(err){if(msg)msg('❌ Restore failed: '+err.message,'err');}
+  };
+  inp.click();
+}
+async function sfPushToServer(msg){
+  if(!_db)return msg('Firebase is not connected — please connect first','err');
+  try{
+    msg('⏳ Server pe push ho raha hai…');
+    for(const k of ALL_KEYS){
+      const v=localStorage.getItem(k);
+      if(v)await _db.ref('sf8/'+k).set(JSON.parse(v));
+    }
+    msg('✅ Saara data server pe push ho gaya!');
+  }catch(e){msg('❌ Push failed: '+e.message,'err');}
+}
+const uid=()=>Math.random().toString(36).slice(2,10);
+const today=()=>new Date().toISOString().slice(0,10);
+const fR=n=>'₹'+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+// PDF-safe rupee formatter — jsPDF's built-in helvetica font has no ₹ glyph (it rendered as a broken "¶"),
+// so every PDF (slip, reports, ledger, cheques) uses "Rs." instead of the ₹ symbol.
+const fRp=n=>'Rs. '+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+// Total statutory deduction (EPF Employee+Employer, EPS, ESIC Employee+Employer) — based on Pay as per Record.
+const totalDeduction=(recPay,st)=>{
+  st=st||{};
+  const rp=Number(recPay)||0;
+  if(!rp)return 0;
+  const epsWageCeil=st.epsWageCeil??15000;
+  const esicWageLim=st.esicWageLim??21000;
+  const capBase=Math.min(rp,epsWageCeil);
+  const epfEmpAmt=Math.round(rp*((st.epfEmp??12)/100));
+  const epfPFAmt=Math.round(capBase*((st.epfErPF??3.67)/100));
+  const epsAmt=Math.round(capBase*((st.epfErEPS??8.33)/100));
+  const esicEmpAmt=rp<=esicWageLim?Math.round(rp*((st.esicEmp??0.75)/100)):0;
+  const esicErAmt=rp<=esicWageLim?Math.round(rp*((st.esicEr??3.25)/100)):0;
+  return epfEmpAmt+epfPFAmt+epsAmt+esicEmpAmt+esicErAmt;
+};
+// Cheque Amount = Pay as per Record minus EPF Employer (3.67%) minus EPS Employer (8.33%), both capped at the EPS wage ceiling, minus ESIC Employee (0.75%, if within the ESIC wage limit).
 const roundAmt=(amt,st)=>{const n=Number(amt)||0;return (st&&st.roundOff10)?Math.round(n/5)*5:n;};
 const chequeAmt=(recPay,st)=>{
   st=st||{};
