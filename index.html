@@ -35,6 +35,9 @@ body{background:#f2f2f7;font-family:'Inter',-apple-system,BlinkMacSystemFont,san
 ::-webkit-scrollbar-thumb{background:#2E3247;border-radius:4px}
 ::-webkit-scrollbar-track{background:transparent}
 input[type=checkbox]{accent-color:#0071e3}
+/* ── Number inputs: hide native spin arrows + stop accidental scroll-wheel value changes ── */
+input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield}
 /* ── Smooth card hover transitions ── */
 button{transition:all .15s ease;outline:none;}
 button:active{transform:scale(.97)!important;}
@@ -2928,6 +2931,7 @@ function SyncSec({cfg,setCfg,fbSt,setFbSt,T,msg}){
     </div>
   </div>`;
 }
+document.addEventListener('wheel',e=>{const el=document.activeElement;if(el&&el.tagName==='INPUT'&&el.type==='number')el.blur();},{passive:true});
 ReactDOM.createRoot(document.getElementById('app')).render(React.createElement(App));
 </script>
 <script>
