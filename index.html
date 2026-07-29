@@ -449,12 +449,11 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
   const pDayCP=cp/FDays;
   const absDedCP=Math.round(pDayCP*abs);
   const grossCP=Math.max(0,cp-absDedCP);
-  const mDed=Number(salRec.mDed||0);
   const rate=Number(salRec.recPay)||0;
   const esicWL=st.esicWageLim??21000;
   const epfE=Math.round(Math.round(rate*((st.epfEmp??12)/100))*paidRatio);
   const esicE=rate<=esicWL?Math.round(Math.round(rate*((st.esicEmp??0.75)/100))*paidRatio):0;
-  const otherDed=Math.max(0,mDed-epfE-esicE);
+  const mDed=epfE+esicE; // employee-side only — matches what's actually itemised below (employer EPF/EPS/ESIC is the agency's cost, not deducted from staff)
   const netPay=Math.max(0,grossCP-mDed);
 
   if(isBW){
