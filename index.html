@@ -148,6 +148,8 @@ async function sfPushToServer(msg){
 }
 const uid=()=>Math.random().toString(36).slice(2,10);
 const today=()=>new Date().toISOString().slice(0,10);
+// EPF Employee (12%) base — capped at the configured EPF Employee Wage Ceiling if one is set (0/blank = no cap, full Pay as per Record).
+const epfEmpBase=(rate,st)=>{st=st||{};const ceil=Number(st.epfEmpWageCeil)||0;return ceil>0?Math.min(Number(rate)||0,ceil):(Number(rate)||0);};
 const fR=n=>'₹'+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
 // PDF-safe rupee formatter — jsPDF's built-in helvetica font has no ₹ glyph (it rendered as a broken "¶"),
 // so every PDF (slip, reports, ledger, cheques) uses "Rs." instead of the ₹ symbol.
@@ -160,7 +162,7 @@ const totalDeduction=(recPay,st)=>{
   const epsWageCeil=st.epsWageCeil??15000;
   const esicWageLim=st.esicWageLim??21000;
   const capBase=Math.min(rp,epsWageCeil);
-  const epfEmpAmt=Math.round(rp*((st.epfEmp??12)/100));
+  const epfEmpAmt=Math.round(epfEmpBase(rp,st)*((st.epfEmp??12)/100));
   const epfPFAmt=Math.round(capBase*((st.epfErPF??3.67)/100));
   const epsAmt=Math.round(capBase*((st.epfErEPS??8.33)/100));
   const esicEmpAmt=rp<=esicWageLim?Math.round(rp*((st.esicEmp??0.75)/100)):0;
@@ -185,6 +187,17 @@ const marginAddOn=(role,comp,cfg)=>{
 // Per-category cheque rule: each component (EPF Employee/Employer, EPS Employer, ESIC Employee/Employer) is either
 // 'add', 'subtract' (default for epfPF/eps/esicEmp, matching the original fixed formula), or 'none' (default for epfEmp/esicEr).
 const DEF_CHEQUE_SEL={epfEmp:'none',epfPF:'subtract',eps:'subtract',esicEmp:'subtract',esicEr:'none'};
+const CHIP_NAMES={epfEmp:'EPF Employee',epfPF:'EPF Employer',eps:'EPS Employer',esicEmp:'ESIC Employee',esicEr:'ESIC Employer'};
+// Builds a human-readable "− X − Y + Z" fragment from a category's chip selection, for dynamic preview labels.
+const selLabel=(role,cfg,defSel,customKey)=>{
+  const sel={...defSel,...(((cfg&&cfg[customKey])||{})[role]||{})};
+  const parts=[];
+  for(const k of ['epfEmp','epfPF','eps','esicEmp','esicEr']){
+    if(sel[k]==='add')parts.push('+ '+CHIP_NAMES[k]);
+    else if(sel[k]==='subtract')parts.push('− '+CHIP_NAMES[k]);
+  }
+  return parts.length?parts.join(' '):'(no adjustments)';
+};
 const chequeAddOn=(role,comp,cfg)=>{
   comp=comp||{};
   const vals={epfEmp:Number(comp.epfEmp)||0,epfPF:Number(comp.epfPF)||0,eps:Number(comp.eps)||0,esicEmp:Number(comp.esicEmp)||0,esicEr:Number(comp.esicEr)||0};
@@ -204,7 +217,7 @@ const chequeAmt=(recPay,cfg,role)=>{
   const epsWageCeil=st.epsWageCeil??15000;
   const esicWageLim=st.esicWageLim??21000;
   const capBase=Math.min(rp,epsWageCeil);
-  const epfEmpAmt=Math.round(rp*((st.epfEmp??12)/100));
+  const epfEmpAmt=Math.round(epfEmpBase(rp,st)*((st.epfEmp??12)/100));
   const epfPFAmt=Math.round(capBase*((st.epfErPF??3.67)/100));
   const epsAmt=Math.round(capBase*((st.epfErEPS??8.33)/100));
   const esicEmpAmt=rp<=esicWageLim?Math.round(rp*((st.esicEmp??0.75)/100)):0;
@@ -451,7 +464,7 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
   const grossCP=Math.max(0,cp-absDedCP);
   const rate=Number(salRec.recPay)||0;
   const esicWL=st.esicWageLim??21000;
-  const epfE=Math.round(Math.round(rate*((st.epfEmp??12)/100))*paidRatio);
+  const epfE=Math.round(Math.round(epfEmpBase(rate,st)*((st.epfEmp??12)/100))*paidRatio);
   const esicE=rate<=esicWL?Math.round(Math.round(rate*((st.esicEmp??0.75)/100))*paidRatio):0;
   const mDed=epfE+esicE; // employee-side only — matches what's actually itemised below (employer EPF/EPS/ESIC is the agency's cost, not deducted from staff)
   const netPay=Math.max(0,grossCP-mDed);
@@ -683,7 +696,7 @@ async function downloadMonthExcel(monSal, staff, cfg, msgFn){
       const stf=staff.find(x=>x.id===s.sid)||{};
       const FD=30, abs=Number(s.abs)||0, paidDays=FD-abs, paidRatio=paidDays/FD;
       const rate=Number(s.recPay)||0;
-      const epfEmp=Math.round(Math.round(rate*((st.epfEmp??12)/100))*paidRatio);
+      const epfEmp=Math.round(Math.round(epfEmpBase(rate,st)*((st.epfEmp??12)/100))*paidRatio);
       const epfPF=Math.round(Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErPF??3.67)/100))*paidRatio);
       const epsAmt=Math.round(Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErEPS??8.33)/100))*paidRatio);
       const esicEmp=rate<=esicWL?Math.round(Math.round(rate*((st.esicEmp??0.75)/100))*paidRatio):0;
@@ -1217,7 +1230,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const st=cfg.statutory||{};
     const rate=Number(s.recPay)||0;
     const esicWL=st.esicWageLim??21000;
-    const epfEmpAmt=s.epfOvr!==undefined&&s.epfOvr!==''?Number(s.epfOvr):Math.round(rate*((st.epfEmp??12)/100));
+    const epfEmpAmt=s.epfOvr!==undefined&&s.epfOvr!==''?Number(s.epfOvr):Math.round(epfEmpBase(rate,st)*((st.epfEmp??12)/100));
     const epfPFpct=st.epfErPF??3.67, epsPct=st.epfErEPS??8.33;
     const epsWageCeil=st.epsWageCeil??15000;
     const epfPFAmt=Math.round(Math.min(rate,epsWageCeil)*(epfPFpct/100));
@@ -1480,7 +1493,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const st=cfg.statutory||{};
     const rate=Number(s.recPay)||0;
     const esicWL=st.esicWageLim??21000;
-    const epfEmpAmt=Math.round((s.epfOvr!==undefined&&s.epfOvr!==''?Number(s.epfOvr):Math.round(rate*((st.epfEmp??12)/100)))*(effDays/FD));
+    const epfEmpAmt=Math.round((s.epfOvr!==undefined&&s.epfOvr!==''?Number(s.epfOvr):Math.round(epfEmpBase(rate,st)*((st.epfEmp??12)/100)))*(effDays/FD));
     const epfPFpct=st.epfErPF??3.67, epsPct=st.epfErEPS??8.33;
     const epsWageCeil=st.epsWageCeil??15000;
     const epfPFAmt=Math.round(Math.round(Math.min(rate,epsWageCeil)*(epfPFpct/100))*(effDays/FD));
@@ -2370,7 +2383,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
               const st=cfg.statutory||{};
               const rate=Number(s.recPay)||0;
               const esicWL=st.esicWageLim??21000;
-              const epfEmpAmt=s.epfOvr!==undefined&&s.epfOvr!==''?Number(s.epfOvr):Math.round(rate*((st.epfEmp??12)/100));
+              const epfEmpAmt=s.epfOvr!==undefined&&s.epfOvr!==''?Number(s.epfOvr):Math.round(epfEmpBase(rate,st)*((st.epfEmp??12)/100));
               const epfPFAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErPF??3.67)/100));
               const epsAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErEPS??8.33)/100));
               const esicEmpAmt=s.esicOvr!==undefined&&s.esicOvr!==''?Number(s.esicOvr):rate<=esicWL?Math.round(rate*((st.esicEmp??0.75)/100)):0;
@@ -2391,6 +2404,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
     ${sec==='statutory'&&(()=>{
       const st=cfg.statutory||{};
       const epfEmp=st.epfEmp??12;
+      const epfEmpWageCeil=st.epfEmpWageCeil??0;
       const epfErPF=st.epfErPF??3.67, epfErEPS=st.epfErEPS??8.33;
       const epsWageCeil=st.epsWageCeil??15000;
       const esicEmp=st.esicEmp??0.75, esicEr=st.esicEr??3.25;
@@ -2401,10 +2415,17 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
       return html`<div style=${{display:'flex',flexDirection:'column',gap:14}}>
         <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
           <div style=${{fontSize:11,fontWeight:800,color:T.acc,letterSpacing:.8,marginBottom:12}}>EPF — EMPLOYEE</div>
-          <div>
-            <div style=${{fontSize:10,color:T.sub,fontWeight:800,marginBottom:5}}>EMPLOYEE CONTRIBUTION %</div>
-            <div style=${{position:'relative'}}><input type="number" step="0.01" value=${epfEmp} onChange=${e=>save('epfEmp',e.target.value)} style=${inpSt}/><span style=${{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:T.sub,fontWeight:800}}>%</span></div>
-            <div style=${{fontSize:10,color:T.mut,marginTop:4}}>Default 12% — fully goes to EPF account</div>
+          <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div>
+              <div style=${{fontSize:10,color:T.sub,fontWeight:800,marginBottom:5}}>EMPLOYEE CONTRIBUTION %</div>
+              <div style=${{position:'relative'}}><input type="number" step="0.01" value=${epfEmp} onChange=${e=>save('epfEmp',e.target.value)} style=${inpSt}/><span style=${{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:T.sub,fontWeight:800}}>%</span></div>
+              <div style=${{fontSize:10,color:T.mut,marginTop:4}}>Default 12% — fully goes to EPF account</div>
+            </div>
+            <div>
+              <div style=${{fontSize:10,color:T.sub,fontWeight:800,marginBottom:5}}>EPF EMPLOYEE WAGE CEILING (₹/month)</div>
+              <input type="number" placeholder="0 = no ceiling" value=${epfEmpWageCeil||''} onChange=${e=>save('epfEmpWageCeil',e.target.value)} style=${inpStNoR}/>
+              <div style=${{fontSize:10,color:T.mut,marginTop:4}}>Leave 0/blank to deduct on full Pay as per Record — set e.g. 15000 to cap the base like EPS</div>
+            </div>
           </div>
         </div>
         <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
@@ -2810,18 +2831,18 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
             ${exC.length>0&&html`<div style=${{display:'flex',gap:6,flexWrap:'wrap',marginTop:2}}>${exC.map(c=>html`<button key=${c} onClick=${()=>setForm({...form,client:c})} style=${{background:form.client===c?T.accS:T.card,border:`1px solid ${form.client===c?T.accB:T.bdr}`,color:form.client===c?T.acc:T.sub,borderRadius:20,padding:'4px 11px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>${c}</button>`)}</div>`}
           </div>
           <${Inp} T=${T} label="Pay as per Record (₹)" type="number" value=${form.recPay} onChange=${e=>setForm({...form,recPay:e.target.value})} placeholder="Statutory/record salary"/>
-          ${form.recPay&&html`<div style=${{background:T.blu+'14',borderRadius:8,padding:'6px 10px',fontSize:12,color:T.blu,fontWeight:800}}>Cheque Amount (Record − Employer EPF/EPS/ESIC): ${fR(chequeAmt(form.recPay,cfg,form.role))}/mo</div>`}
+          ${form.recPay&&html`<div style=${{background:T.blu+'14',borderRadius:8,padding:'6px 10px',fontSize:12,color:T.blu,fontWeight:800}}>Cheque Amount (Record ${selLabel(form.role,cfg,DEF_CHEQUE_SEL,'catChequeCustom')}): ${fR(chequeAmt(form.recPay,cfg,form.role))}/mo</div>`}
           ${form.mRate&&form.recPay&&(()=>{
             const st=cfg.statutory||{};
             const rate=Number(form.recPay)||0;
             const esicWL=st.esicWageLim??21000;
-            const epfEmpAmt=form.epfOvr!==undefined&&form.epfOvr!==''?Number(form.epfOvr):Math.round(rate*((st.epfEmp??12)/100));
+            const epfEmpAmt=form.epfOvr!==undefined&&form.epfOvr!==''?Number(form.epfOvr):Math.round(epfEmpBase(rate,st)*((st.epfEmp??12)/100));
             const epfPFAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErPF??3.67)/100));
             const epsAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErEPS??8.33)/100));
             const esicEmpAmt=form.esicOvr!==undefined&&form.esicOvr!==''?Number(form.esicOvr):rate<=esicWL?Math.round(rate*((st.esicEmp??0.75)/100)):0;
             const esicErAmt=rate<=esicWL?Math.round(rate*((st.esicEr??3.25)/100)):0;
             const marginV=roundAmt(chequeAmt(form.recPay,cfg,form.role)-Number(form.mRate)+marginAddOn(form.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory);
-            return html`<div style=${{background:marginV>=0?T.grn+'14':T.red+'14',borderRadius:8,padding:'6px 10px',fontSize:12,color:marginV>=0?T.grn:T.red,fontWeight:800}}>Margin: ${fR(marginV)}/mo</div>`;
+            return html`<div style=${{background:marginV>=0?T.grn+'14':T.red+'14',borderRadius:8,padding:'6px 10px',fontSize:12,color:marginV>=0?T.grn:T.red,fontWeight:800}}>Margin (Cheque − Actual Pay ${selLabel(form.role,cfg,DEF_CUSTOM_SEL,'catMarginCustom')}): ${fR(marginV)}/mo</div>`;
           })()}
           ${(()=>{
             const st=cfg.statutory||{};
@@ -2829,7 +2850,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
             if(!rate)return null;
             const esicWL=st.esicWageLim??21000;
             // Employee contributions
-            const epfEmpAmt=form.epfOvr!==undefined&&form.epfOvr!==''?Number(form.epfOvr):Math.round(rate*((st.epfEmp??12)/100));
+            const epfEmpAmt=form.epfOvr!==undefined&&form.epfOvr!==''?Number(form.epfOvr):Math.round(epfEmpBase(rate,st)*((st.epfEmp??12)/100));
             const esicEmpAmt=form.esicOvr!==undefined&&form.esicOvr!==''?Number(form.esicOvr):rate<=esicWL?Math.round(rate*((st.esicEmp??0.75)/100)):0;
             // Employer contributions
             const epfPFAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErPF??3.67)/100));
