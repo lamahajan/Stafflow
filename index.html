@@ -255,17 +255,21 @@ const inFY=(mon,yr,fy)=>(yr===fy&&mon>=4)||(yr===fy+1&&mon<=3);
 const K={staff:'sf8_s',adv:'sf8_a',sal:'sf8_sl',chq:'sf8_c',cats:'sf8_ct',cfg:'sf8_cfg'};
 let _db=null;
 const initFB=async fbcfg=>{
-  if(!fbcfg?.apiKey||!fbcfg?.databaseURL)return false;
+  if(!fbcfg?.apiKey||!fbcfg?.databaseURL)return{ok:false,err:'Missing API Key or Database URL'};
   try{
     if(!window.firebase){
       await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
       await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
     }
     const ex=window.firebase.apps?.find(a=>a.name==='sf');
-    const app=ex||window.firebase.initializeApp(fbcfg,'sf');
-    _db=window.firebase.database(app);return true;
-  }catch(e){console.error(e);return false;}
+    if(ex)await ex.delete().catch(()=>{}); // always start from a clean app instance so a disconnect→reconnect never reuses stale state
+    const app=window.firebase.initializeApp(fbcfg,'sf');
+    _db=window.firebase.database(app);
+    await _db.ref('.info/connected').once('value'); // confirm the database is actually reachable, not just that the SDK object was created
+    return{ok:true};
+  }catch(e){console.error(e);_db=null;return{ok:false,err:e.message||String(e)};}
 };
+const teardownFB=async()=>{try{const ex=window.firebase?.apps?.find(a=>a.name==='sf');if(ex)await ex.delete().catch(()=>{});}catch{}_db=null;};
 const ld=async k=>{try{if(_db){const s=await _db.ref('sf8/'+k).once('value');if(s.val()!==null)return s.val();}const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
 const sv=async(k,d)=>{try{localStorage.setItem(k,JSON.stringify(d));if(_db)_db.ref('sf8/'+k).set(d);}catch{}};
 const TH={
@@ -1057,8 +1061,8 @@ function App(){
       }
     }
     setCfg(mc);
-    if(mc.fbcfg?.apiKey){setFbSt('connecting');const ok=await initFB(mc.fbcfg);
-      if(ok){setFbSt('connected');
+    if(mc.fbcfg?.apiKey){setFbSt('connecting');const r=await initFB(mc.fbcfg);
+      if(r.ok){setFbSt('connected');
         const _sets={staff:setStaff,adv:setAdv,sal:setSal,chq:setChq,cats:setCats};
         const _def={staff:[],adv:[],sal:[],chq:[],cats:DEF_CATS};
         ['staff','adv','sal','chq','cats'].forEach(k=>{_db.ref('sf8/'+K[k]).on('value',sn=>{const v=sn.val()!==null?sn.val():_def[k];_sets[k](v);localStorage.setItem(K[k],JSON.stringify(v));});});}
@@ -2936,13 +2940,13 @@ function SyncSec({cfg,setCfg,fbSt,setFbSt,T,msg}){
   const[choice,setChoice]=useState(false),[busy,setBusy]=useState(false);
   const fbcfgNow=()=>({apiKey:apiKey.trim(),databaseURL:dbURL.trim(),projectId:dbURL.replace('https://','').split('.')[0]});
   const connect=async()=>{if(!apiKey.trim()||!dbURL.trim())return msg('Enter API Key and Database URL','err');setTesting(true);setFbSt('connecting');
-    const ok=await initFB(fbcfgNow());
+    const r=await initFB(fbcfgNow());
     // Don't touch any data yet — just establish the connection, then let the user decide which direction to sync.
-    if(ok){setFbSt('connected');setChoice(true);msg('Firebase connected — choose a sync direction below ⬇️','inf');}
-    else{setFbSt('error');msg('Connection failed — check keys','err');}setTesting(false);};
+    if(r.ok){setFbSt('connected');setChoice(true);msg('Firebase connected — choose a sync direction below ⬇️','inf');}
+    else{setFbSt('error');msg('Connection failed: '+(r.err||'check keys'),'err');}setTesting(false);};
   const doPush=async()=>{setBusy(true);const nc={...cfg,fbcfg:fbcfgNow()};setCfg(nc);await sfPushToServer(msg);setChoice(false);setBusy(false);};
   const doPull=async()=>{setBusy(true);await sfPullFromServer(msg,fbcfgNow());setBusy(false);};
-  const disc=()=>{_db=null;setFbSt('disconnected');const nc={...cfg,fbcfg:null};setCfg(nc);sv(K.cfg,nc);msg('Disconnected');};
+  const disc=async()=>{await teardownFB();setFbSt('disconnected');setChoice(false);setBusy(false);const nc={...cfg,fbcfg:null};setCfg(nc);sv(K.cfg,nc);msg('Disconnected');};
   const sc={connected:T.grn,connecting:T.yel,error:T.red,disconnected:T.mut}[fbSt]||T.mut;
   const sl={connected:'Connected ✓',connecting:'Connecting…',error:'Error',disconnected:'Not Connected'}[fbSt]||'Unknown';
   return html`<div style=${{display:'flex',flexDirection:'column',gap:14}}>
