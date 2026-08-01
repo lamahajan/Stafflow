@@ -129,7 +129,7 @@ function sfRestoreAll(msg){
       const data=JSON.parse(text);
       if(!confirm('⚠️ This will REPLACE all your current data. Are you sure?'))return;
       ALL_KEYS.forEach(k=>{if(data[k]!==undefined)localStorage.setItem(k,data[k]);});
-      if(msg)msg('✅ Data restore ho gaya! Reloading…','inf');
+      if(msg)msg('✅ Data restored! Reloading…','inf');
       setTimeout(()=>location.reload(),1200);
     }catch(err){if(msg)msg('❌ Restore failed: '+err.message,'err');}
   };
@@ -138,13 +138,33 @@ function sfRestoreAll(msg){
 async function sfPushToServer(msg){
   if(!_db)return msg('Firebase is not connected — please connect first','err');
   try{
-    msg('⏳ Server pe push ho raha hai…');
+    msg('⏳ Pushing to server…');
     for(const k of ALL_KEYS){
       const v=localStorage.getItem(k);
       if(v)await _db.ref('sf8/'+k).set(JSON.parse(v));
     }
-    msg('✅ Saara data server pe push ho gaya!');
+    msg('✅ All data pushed to server!');
   }catch(e){msg('❌ Push failed: '+e.message,'err');}
+}
+async function sfPullFromServer(msg,localFbcfg){
+  if(!_db)return msg('Firebase is not connected — please connect first','err');
+  try{
+    msg('⏳ Pulling data from server…');
+    let any=false;
+    for(const k of ALL_KEYS){
+      const snap=await _db.ref('sf8/'+k).once('value');
+      const v=snap.val();
+      if(v!==null&&v!==undefined){
+        any=true;
+        // keep THIS device's own Firebase credentials so it's still connected after reload, even if server's copy differs
+        if(k==='sf8_cfg'&&localFbcfg&&typeof v==='object')v.fbcfg=localFbcfg;
+        localStorage.setItem(k,JSON.stringify(v));
+      }
+    }
+    if(!any)return msg('No data found on the server yet — push from another device first','err');
+    msg('✅ Server data pulled to this device! Reloading…','inf');
+    setTimeout(()=>location.reload(),1200);
+  }catch(e){msg('❌ Pull failed: '+e.message,'err');}
 }
 const uid=()=>Math.random().toString(36).slice(2,10);
 const today=()=>new Date().toISOString().slice(0,10);
@@ -2378,6 +2398,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
           <div style=${{textAlign:'right',flexShrink:0,marginLeft:10}}>
             <div style=${{fontSize:10,color:T.sub}}>Monthly</div>
             <div style=${{fontSize:15,fontWeight:900,color:T.acc,fontFamily:"'Inter'"}}>${fR(s.mRate)}</div>
+            ${s.recPay&&(()=>{const diff=roundAmt(chequeAmt(s.recPay,cfg,s.role)-Number(s.mRate),cfg.statutory);return html`<div style=${{fontSize:10,color:diff>=0?T.grn:T.red,marginTop:1}}>${diff>=0?'+':''}${fR(diff)}</div>`;})()}
             ${s.recPay&&totalDeduction(s.recPay,cfg.statutory)>0&&html`<div><div style=${{fontSize:10,color:T.sub,marginTop:3}}>Deduction</div><div style=${{fontSize:13,fontWeight:800,color:T.red,fontFamily:"'Inter'"}}>${fR(totalDeduction(s.recPay,cfg.statutory))}/mo</div></div>`}
             ${s.recPay&&(()=>{
               const st=cfg.statutory||{};
@@ -2912,22 +2933,35 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
 function SyncSec({cfg,setCfg,fbSt,setFbSt,T,msg}){
   const saved=cfg.fbcfg||{};
   const[apiKey,setApiKey]=useState(saved.apiKey||''),[dbURL,setDbURL]=useState(saved.databaseURL||''),[testing,setTesting]=useState(false);
+  const[choice,setChoice]=useState(false),[busy,setBusy]=useState(false);
+  const fbcfgNow=()=>({apiKey:apiKey.trim(),databaseURL:dbURL.trim(),projectId:dbURL.replace('https://','').split('.')[0]});
   const connect=async()=>{if(!apiKey.trim()||!dbURL.trim())return msg('Enter API Key and Database URL','err');setTesting(true);setFbSt('connecting');
-    const fbcfg={apiKey:apiKey.trim(),databaseURL:dbURL.trim(),projectId:dbURL.replace('https://','').split('.')[0]};
-    const ok=await initFB(fbcfg);
-    if(ok){const nc={...cfg,fbcfg};setCfg(nc);sv(K.cfg,nc);setFbSt('connected');msg('Firebase connected! ✓');}
+    const ok=await initFB(fbcfgNow());
+    // Don't touch any data yet — just establish the connection, then let the user decide which direction to sync.
+    if(ok){setFbSt('connected');setChoice(true);msg('Firebase connected — choose a sync direction below ⬇️','inf');}
     else{setFbSt('error');msg('Connection failed — check keys','err');}setTesting(false);};
+  const doPush=async()=>{setBusy(true);const nc={...cfg,fbcfg:fbcfgNow()};setCfg(nc);await sfPushToServer(msg);setChoice(false);setBusy(false);};
+  const doPull=async()=>{setBusy(true);await sfPullFromServer(msg,fbcfgNow());setBusy(false);};
   const disc=()=>{_db=null;setFbSt('disconnected');const nc={...cfg,fbcfg:null};setCfg(nc);sv(K.cfg,nc);msg('Disconnected');};
   const sc={connected:T.grn,connecting:T.yel,error:T.red,disconnected:T.mut}[fbSt]||T.mut;
   const sl={connected:'Connected ✓',connecting:'Connecting…',error:'Error',disconnected:'Not Connected'}[fbSt]||'Unknown';
   return html`<div style=${{display:'flex',flexDirection:'column',gap:14}}>
     <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}><div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style=${{fontSize:13,fontWeight:800,color:T.txt}}>Firebase Realtime Sync</div><div style=${{fontSize:12,color:sc,marginTop:3,fontWeight:700}}>${sl}</div></div><div style=${{width:12,height:12,borderRadius:'50%',background:sc}}/></div></div>
+    ${choice&&html`<div style=${{background:T.acc+'12',border:`1px solid ${T.accB}`,borderRadius:12,padding:14}}>
+      <div style=${{fontSize:12,fontWeight:800,color:T.acc,marginBottom:4}}>Choose a sync direction</div>
+      <div style=${{fontSize:11,color:T.sub,marginBottom:10,lineHeight:1.5}}><b>Push</b> — send this device's data to the server (the server's data will be overwritten). <b>Pull</b> — bring the server's data to this device (this device's local data will be overwritten).</div>
+      <div style=${{display:'flex',gap:8}}>
+        <button onClick=${doPush} disabled=${busy} style=${{flex:1,background:T.blu,color:'#fff',border:'none',borderRadius:8,padding:'9px 0',fontSize:12,fontWeight:800,cursor:busy?'not-allowed':'pointer',opacity:busy?.6:1,fontFamily:'inherit'}}>⬆️ Push Local → Server</button>
+        <button onClick=${doPull} disabled=${busy} style=${{flex:1,background:T.grn,color:'#fff',border:'none',borderRadius:8,padding:'9px 0',fontSize:12,fontWeight:800,cursor:busy?'not-allowed':'pointer',opacity:busy?.6:1,fontFamily:'inherit'}}>⬇️ Pull Server → Local</button>
+      </div>
+      <button onClick=${()=>setChoice(false)} style=${{width:'100%',marginTop:8,background:'transparent',border:'none',color:T.mut,fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>Decide later</button>
+    </div>`}
     <div style=${{background:T.acc+'12',border:`1px solid ${T.accB}`,borderRadius:12,padding:13}}><div style=${{fontSize:11,fontWeight:800,color:T.acc,marginBottom:10}}>HOW TO SET UP (FREE)</div>${['Go to console.firebase.google.com','Create project → Realtime Database → Test mode','Project Settings → Add web app → Register','Copy apiKey and databaseURL below'].map((t,i)=>html`<div key=${i} style=${{display:'flex',gap:8,marginBottom:6}}><span style=${{color:T.acc,fontSize:12,fontWeight:800,flexShrink:0}}>${i+1}.</span><span style=${{color:T.sub,fontSize:12}}>${t}</span></div>`)}</div>
     <${Inp} T=${T} label="Firebase API Key *" value=${apiKey} onChange=${e=>setApiKey(e.target.value)} placeholder="AIzaSy…"/>
     <${Inp} T=${T} label="Database URL *" value=${dbURL} onChange=${e=>setDbURL(e.target.value)} placeholder="https://your-project.firebaseio.com"/>
     <div style=${{display:'flex',gap:10}}>${fbSt==='connected'?html`<${Btn} T=${T} v="danger" full ch="Disconnect" onClick=${disc}/>`:html`<${Btn} T=${T} full ch=${testing?'Connecting…':'Connect & Sync'} onClick=${connect} disabled=${testing}/>`}</div>
     <div style=${{marginTop:14,paddingTop:12,borderTop:`1.5px dashed ${T.bdr}`}}>
-      <div style=${{fontSize:12,fontWeight:800,color:T.sub,marginBottom:6}}>📦 Config Transfer (New Machine ke liye)</div>
+      <div style=${{fontSize:12,fontWeight:800,color:T.sub,marginBottom:6}}>📦 Config Transfer (For a New Machine)</div>
       <div style=${{fontSize:11,color:T.mut,marginBottom:8}}>Export Firebase credentials. Import on any machine — everything will auto-load.</div>
       <div style=${{display:'flex',gap:8}}>
         <button onClick=${()=>sfExportCfg()} style=${{flex:1,background:T.acc,color:'#fff',border:'none',borderRadius:8,padding:'8px 0',fontSize:12,fontWeight:800,cursor:'pointer'}}>⬇️ Export Config</button>
