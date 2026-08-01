@@ -885,16 +885,15 @@ async function genPDF(mon,yr,monSal,allAdv,allChq,staff,msgFn,cfg){
   const ds=new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'});
   const rptStaffIds=new Set(staff.filter(s=>s.inReport!==false).map(s=>s.id));
   const monSalF=monSal.filter(s=>rptStaffIds.has(s.sid));
-  const tN=monSalF.reduce((s,x)=>s+Number(x.net),0),tG=monSalF.reduce((s,x)=>s+Number(x.gross),0),tAd=monSalF.reduce((s,x)=>s+Number(x.advDed),0),tC=monSalF.reduce((s,x)=>s+Number(x.cp||0),0),mg=tC-tN;
+  const tN=monSalF.reduce((s,x)=>s+Number(x.net),0),tAd=monSalF.reduce((s,x)=>s+Number(x.advDed),0),tC=monSalF.reduce((s,x)=>s+Number(x.cp||0),0),tMR=monSalF.reduce((s,x)=>s+Number(x.mRate||0),0),tDiff=tC-tMR;
   const mChq=allChq.filter(c=>{const d=new Date(c.date);return d.getMonth()+1===mon&&d.getFullYear()===yr;});
   const pAdL=allAdv.filter(a=>a.status==='pending'),pChqL=allChq.filter(c=>c.status==='pending');
   const pAmt=pAdL.reduce((s,a)=>s+Number(a.amount),0)+pChqL.reduce((s,c)=>s+Number(c.expected||c.ret),0);
   pdfPage(doc,'MONTHLY REPORT',lbl,['Period: '+lbl,'Staff in Report: '+monSalF.length,'Generated: '+ds,'Outstanding: '+fRp(pAmt)],1,1);
   let y=35;
-  y=summBox(doc,[['Gross Salary',fRp(tG),PRP],['Adv. Deducted',fRp(tAd),RED_],['Net Salary Paid',fRp(tN),RED_],['Client Income',fRp(tC),BLU_],['Agency Margin',fRp(mg),mg>=0?GRN_:RED_]],y);
+  y=summBox(doc,[['Monthly Salary',fRp(tMR),PRP],['Adv. Deducted',fRp(tAd),RED_],['Cheque Amount',fRp(tC),BLU_],['Difference',fRp(tDiff),tDiff>=0?GRN_:RED_]],y);
   if(pAmt>0){doc.setFillColor(255,247,237);doc.setDrawColor(251,191,36);doc.setLineWidth(0.3);doc.roundedRect(14,y,182,8,1.5,1.5,'FD');doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(...AMB);doc.text('⚠  OUTSTANDING DUES: '+fRp(pAmt)+' ('+pAdL.length+' advances, '+pChqL.length+' unsettled cheques)',17,y+5.2);y+=11;}
   if(monSalF.length){y=secHead(doc,'Salary Statement — '+lbl,y);
-    const tMR=monSalF.reduce((s,x)=>s+Number(x.mRate||0),0),tDiff=tC-tMR;
     doc.autoTable({startY:y,head:[['Sr.','Staff Name','Absents','Advance','Cheque Amount','Monthly Salary','Difference']],
       body:monSalF.map((s,i)=>{const diff=Number(s.cp||0)-Number(s.mRate||0);return[i+1,s.name,String(s.abs),s.advDed>0?fRp(s.advDed):'Nil',s.cp>0?fRp(s.cp):'Nil',fRp(s.mRate),(diff>=0?'+':'')+fRp(diff)];}),
       foot:[['','TOTAL',monSalF.reduce((s,x)=>s+x.abs,0),fRp(tAd),fRp(tC),fRp(tMR),(tDiff>=0?'+':'')+fRp(tDiff)]],
@@ -1552,6 +1551,9 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   const[showDisb,setShowDisb]=useState(false);
   const[disbCats,setDisbCats]=useState([]);
   const toggleDisbCat=c=>{setDisbCats(prev=>prev.includes(c)?prev.filter(x=>x!==c):[...prev,c]);};
+  const[showRptCats,setShowRptCats]=useState(false);
+  const[rptCats,setRptCats]=useState([]);
+  const toggleRptCat=c=>{setRptCats(prev=>prev.includes(c)?prev.filter(x=>x!==c):[...prev,c]);};
   const carryStaff=undone.filter(s=>{const pA=adv.filter(a=>a.staffId===s.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);return(pA+pC)>0;});
   return html`<div style=${{padding:16}}>
     ${showMonthPicker&&html`<div style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.8)',zIndex:100,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(5px)'}}>
@@ -1593,7 +1595,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     <div style=${{display:'flex',marginBottom:4}}>
       <div class="sf-sal-actions" style=${{display:'flex',gap:7,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none',minWidth:0,paddingBottom:2,marginBottom:-2,width:'100%'}}>
         <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="book" s=${14} c=${T.acc}/><span class="sf-btn-txt">⚡ Bulk</span></span>`} onClick=${()=>setTab(5)}/>
-        <${Btn} T=${T} sm style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c="#fff"/><span class="sf-btn-txt">Report</span></span>`} onClick=${()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);const st2=selCat==='ALL'?staff:staff.filter(s=>s.role===selCat);genPDF(mon,yr,d,adv,chq,st2,msg,ctx.cfg);}}/>
+        <${Btn} T=${T} sm style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c="#fff"/><span class="sf-btn-txt">Report</span></span>`} onClick=${()=>{setRptCats(selCat==='ALL'?[...cats]:[selCat]);setShowRptCats(true);}}/>
         <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c=${T.acc}/><span class="sf-btn-txt">Slips ZIP</span></span>`} onClick=${async()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);await downloadBulkSlipsZip(d,staff,cfg,msg);}}/>
         <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="xls" s=${14} c=${T.grn}/><span class="sf-btn-txt">Excel</span></span>`} onClick=${()=>{const d=selCat==='ALL'?monSal:monSal.filter(s=>s.role===selCat);downloadMonthExcel(d,staff,cfg,msg);}}/>
         <${Btn} T=${T} sm v="sec" style=${{flexShrink:0}} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}><${Ico} n="pdf" s=${14} c=${T.acc}/><span class="sf-btn-txt">Disburse</span></span>`} onClick=${()=>{setDisbCats([]);setShowDisb(true);}}/>
@@ -1752,6 +1754,36 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
           <${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setShowDisb(false)}/>
           <${Btn} T=${T} full ch="📄 Generate PDF" disabled=${disbCats.length===0}
             onClick=${()=>{genDisbursementPDF(mon,yr,monSal,staff,disbCats,chq,msg,ctx.cfg);setShowDisb(false);}}/>
+        </div>
+      </div>
+    <//>`}
+    ${showRptCats&&html`<${Mdl} title="📄 Monthly Report PDF" onClose=${()=>setShowRptCats(false)} T=${T}>
+      <div style=${{display:'flex',flexDirection:'column',gap:14}}>
+        <div style=${{fontSize:13,color:T.sub}}>Select which categories to include in the report.</div>
+        <div style=${{display:'flex',gap:8}}>
+          <button onClick=${()=>setRptCats([...cats])} style=${{flex:1,background:T.card,border:`1px solid ${T.bdr}`,borderRadius:8,padding:'7px 0',fontSize:11,fontWeight:800,color:T.acc,cursor:'pointer',fontFamily:'inherit'}}>Select All</button>
+          <button onClick=${()=>setRptCats([])} style=${{flex:1,background:T.card,border:`1px solid ${T.bdr}`,borderRadius:8,padding:'7px 0',fontSize:11,fontWeight:800,color:T.mut,cursor:'pointer',fontFamily:'inherit'}}>Clear All</button>
+        </div>
+        <div style=${{display:'flex',flexDirection:'column',gap:8}}>
+          <div style=${{fontSize:11,fontWeight:800,color:T.sub,letterSpacing:.8}}>CATEGORIES</div>
+          ${cats.map((c,i)=>{
+            const cc=CC[i%CC.length];const isOn=rptCats.includes(c);
+            const cnt=monSal.filter(s=>s.role===c).length;
+            return html`<label key=${c} style=${{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',background:isOn?cc+'15':T.card,border:`1px solid ${isOn?cc+'55':T.bdr}`,borderRadius:10,cursor:'pointer',transition:'all .15s'}}>
+              <input type="checkbox" checked=${isOn} onChange=${()=>toggleRptCat(c)} style=${{width:16,height:16,accentColor:cc}}/>
+              <div style=${{width:8,height:8,borderRadius:'50%',background:cc,flexShrink:0}}/>
+              <span style=${{flex:1,fontSize:13,fontWeight:700,color:T.txt}}>${c}</span>
+              <span style=${{fontSize:11,color:T.sub}}>${cnt} processed</span>
+            </label>`;
+          })}
+        </div>
+        ${rptCats.length>0&&html`<div style=${{background:T.accS,border:`1px solid ${T.accB}`,borderRadius:10,padding:'10px 13px',fontSize:12,color:T.acc,fontWeight:700}}>
+          ✓ ${monSal.filter(s=>rptCats.includes(s.role)).length} staff included
+        </div>`}
+        <div style=${{display:'flex',gap:10}}>
+          <${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setShowRptCats(false)}/>
+          <${Btn} T=${T} full ch="📄 Generate PDF" disabled=${rptCats.length===0}
+            onClick=${()=>{const d=monSal.filter(s=>rptCats.includes(s.role));const st2=staff.filter(s=>rptCats.includes(s.role));genPDF(mon,yr,d,adv,chq,st2,msg,ctx.cfg);setShowRptCats(false);}}/>
         </div>
       </div>
     <//>`}
