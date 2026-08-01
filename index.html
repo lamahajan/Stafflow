@@ -162,6 +162,7 @@ async function sfPullFromServer(msg,localFbcfg){
       }
     }
     if(!any)return msg('No data found on the server yet — push from another device first','err');
+    localStorage.setItem('sf8_fb_setup','done');
     msg('✅ Server data pulled to this device! Reloading…','inf');
     setTimeout(()=>location.reload(),1200);
   }catch(e){msg('❌ Pull failed: '+e.message,'err');}
@@ -2941,12 +2942,23 @@ function SyncSec({cfg,setCfg,fbSt,setFbSt,T,msg}){
   const fbcfgNow=()=>({apiKey:apiKey.trim(),databaseURL:dbURL.trim(),projectId:dbURL.replace('https://','').split('.')[0]});
   const connect=async()=>{if(!apiKey.trim()||!dbURL.trim())return msg('Enter API Key and Database URL','err');setTesting(true);setFbSt('connecting');
     const r=await initFB(fbcfgNow());
-    // Don't touch any data yet — just establish the connection, then let the user decide which direction to sync.
-    if(r.ok){setFbSt('connected');setChoice(true);msg('Firebase connected — choose a sync direction below ⬇️','inf');}
-    else{setFbSt('error');msg('Connection failed: '+(r.err||'check keys'),'err');}setTesting(false);};
-  const doPush=async()=>{setBusy(true);const nc={...cfg,fbcfg:fbcfgNow()};setCfg(nc);await sfPushToServer(msg);setChoice(false);setBusy(false);};
+    if(r.ok){
+      const setupDone=localStorage.getItem('sf8_fb_setup')==='done';
+      if(setupDone){
+        // Already set up on this device before — just reconnect and resume live two-way sync, no prompt.
+        const nc={...cfg,fbcfg:fbcfgNow()};setCfg(nc);setFbSt('connected');
+        msg('Firebase reconnected — resuming live sync…','inf');
+        setTimeout(()=>location.reload(),500);
+      }else{
+        // First time connecting on this device — don't touch any data yet, let the user pick a direction first.
+        setFbSt('connected');setChoice(true);
+        msg('First-time setup — choose a sync direction below ⬇️','inf');
+      }
+    }else{setFbSt('error');msg('Connection failed: '+(r.err||'check keys'),'err');}setTesting(false);};
+  const doPush=async()=>{setBusy(true);const nc={...cfg,fbcfg:fbcfgNow()};setCfg(nc);await sfPushToServer(msg);localStorage.setItem('sf8_fb_setup','done');
+    msg('Pushed — switching to live two-way sync…','inf');setTimeout(()=>location.reload(),700);};
   const doPull=async()=>{setBusy(true);await sfPullFromServer(msg,fbcfgNow());setBusy(false);};
-  const disc=async()=>{await teardownFB();setFbSt('disconnected');setChoice(false);setBusy(false);const nc={...cfg,fbcfg:null};setCfg(nc);sv(K.cfg,nc);msg('Disconnected');};
+  const disc=async()=>{await teardownFB();setFbSt('disconnected');setChoice(false);setBusy(false);localStorage.removeItem('sf8_fb_setup');const nc={...cfg,fbcfg:null};setCfg(nc);sv(K.cfg,nc);msg('Disconnected');};
   const sc={connected:T.grn,connecting:T.yel,error:T.red,disconnected:T.mut}[fbSt]||T.mut;
   const sl={connected:'Connected ✓',connecting:'Connecting…',error:'Error',disconnected:'Not Connected'}[fbSt]||'Unknown';
   return html`<div style=${{display:'flex',flexDirection:'column',gap:14}}>
