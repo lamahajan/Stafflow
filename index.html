@@ -178,9 +178,11 @@ const fR=n=>'₹'+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,m
 // PDF-safe rupee formatter — jsPDF's built-in helvetica font has no ₹ glyph (it rendered as a broken "¶"),
 // so every PDF (slip, reports, ledger, cheques) uses "Rs." instead of the ₹ symbol.
 const fRp=n=>'Rs. '+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
-// Total statutory deduction (EPF Employee+Employer, EPS, ESIC Employee+Employer) — based on Pay as per Record.
-const totalDeduction=(recPay,st)=>{
-  st=st||{};
+// Total statutory deduction (EPF Employee+Employer, EPS, ESIC Employee+Employer) — based on Pay as per Record,
+// but only counting the components this category actually uses (via its Margin or Cheque Amount chip selections).
+const totalDeduction=(recPay,cfg,role)=>{
+  cfg=cfg||{};
+  const st=cfg.statutory||{};
   const rp=Number(recPay)||0;
   if(!rp)return 0;
   const epsWageCeil=st.epsWageCeil??15000;
@@ -191,7 +193,16 @@ const totalDeduction=(recPay,st)=>{
   const epsAmt=Math.round(capBase*((st.epfErEPS??8.33)/100));
   const esicEmpAmt=rp<=esicWageLim?Math.round(rp*((st.esicEmp??0.75)/100)):0;
   const esicErAmt=rp<=esicWageLim?Math.round(rp*((st.esicEr??3.25)/100)):0;
-  return epfEmpAmt+epfPFAmt+epsAmt+esicEmpAmt+esicErAmt;
+  const selM={...DEF_CUSTOM_SEL,...((cfg.catMarginCustom||{})[role]||{})};
+  const selC={...DEF_CHEQUE_SEL,...((cfg.catChequeCustom||{})[role]||{})};
+  const isActive=k=>(selM[k]&&selM[k]!=='none')||(selC[k]&&selC[k]!=='none');
+  let total=0;
+  if(isActive('epfEmp'))total+=epfEmpAmt;
+  if(isActive('epfPF'))total+=epfPFAmt;
+  if(isActive('eps'))total+=epsAmt;
+  if(isActive('esicEmp'))total+=esicEmpAmt;
+  if(isActive('esicEr'))total+=esicErAmt;
+  return total;
 };
 // Cheque Amount = Pay as per Record minus EPF Employer (3.67%) minus EPS Employer (8.33%), both capped at the EPS wage ceiling, minus ESIC Employee (0.75%, if within the ESIC wage limit).
 const roundAmt=(amt,st)=>{const n=Number(amt)||0;return (st&&st.roundOff10)?Math.round(n/5)*5:n;};
@@ -2440,7 +2451,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
             <div style=${{fontSize:10,color:T.sub}}>Monthly</div>
             <div style=${{fontSize:15,fontWeight:900,color:T.acc,fontFamily:"'Inter'"}}>${fR(s.mRate)}</div>
             ${s.recPay&&(()=>{const diff=roundAmt(chequeAmt(s.recPay,cfg,s.role)-Number(s.mRate),cfg.statutory);return html`<div style=${{fontSize:10,color:diff>=0?T.grn:T.red,marginTop:1}}>${diff>=0?'+':''}${fR(diff)}</div>`;})()}
-            ${s.recPay&&totalDeduction(s.recPay,cfg.statutory)>0&&html`<div><div style=${{fontSize:10,color:T.sub,marginTop:3}}>Deduction</div><div style=${{fontSize:13,fontWeight:800,color:T.red,fontFamily:"'Inter'"}}>${fR(totalDeduction(s.recPay,cfg.statutory))}/mo</div></div>`}
+            ${s.recPay&&totalDeduction(s.recPay,cfg,s.role)>0&&html`<div><div style=${{fontSize:10,color:T.sub,marginTop:3}}>Deduction</div><div style=${{fontSize:13,fontWeight:800,color:T.red,fontFamily:"'Inter'"}}>${fR(totalDeduction(s.recPay,cfg,s.role))}/mo</div></div>`}
             ${s.recPay&&(()=>{
               const st=cfg.statutory||{};
               const rate=Number(s.recPay)||0;
