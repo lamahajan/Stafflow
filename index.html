@@ -168,6 +168,9 @@ async function sfPullFromServer(msg,localFbcfg){
   }catch(e){msg('❌ Pull failed: '+e.message,'err');}
 }
 const uid=()=>Math.random().toString(36).slice(2,10);
+// Salary processing for a month usually happens in the first ~10 days of the next month, so up to the 10th
+// the "current" month for default-selection / highlighting purposes is treated as the PREVIOUS calendar month.
+const effTargetMY=d=>{let m=d.getMonth()+1,y=d.getFullYear();if(d.getDate()<=10){m-=1;if(m<1){m=12;y-=1;}}return{m,y};};
 const today=()=>new Date().toISOString().slice(0,10);
 // EPF Employee (12%) base — capped at the configured EPF Employee Wage Ceiling if one is set (0/blank = no cap, full Pay as per Record).
 const epfEmpBase=(rate,st)=>{st=st||{};const ceil=Number(st.epfEmpWageCeil)||0;return ceil>0?Math.min(Number(rate)||0,ceil):(Number(rate)||0);};
@@ -891,12 +894,13 @@ async function genPDF(mon,yr,monSal,allAdv,allChq,staff,msgFn,cfg){
   y=summBox(doc,[['Gross Salary',fRp(tG),PRP],['Adv. Deducted',fRp(tAd),RED_],['Net Salary Paid',fRp(tN),RED_],['Client Income',fRp(tC),BLU_],['Agency Margin',fRp(mg),mg>=0?GRN_:RED_]],y);
   if(pAmt>0){doc.setFillColor(255,247,237);doc.setDrawColor(251,191,36);doc.setLineWidth(0.3);doc.roundedRect(14,y,182,8,1.5,1.5,'FD');doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(...AMB);doc.text('⚠  OUTSTANDING DUES: '+fRp(pAmt)+' ('+pAdL.length+' advances, '+pChqL.length+' unsettled cheques)',17,y+5.2);y+=11;}
   if(monSalF.length){y=secHead(doc,'Salary Statement — '+lbl,y);
-    doc.autoTable({startY:y,head:[['Sr.','Staff Name','Role / Client','Abs.','Gross Salary','Adv. Deducted','Net Payable','Client Received','Margin','Status']],
-      body:monSalF.map((s,i)=>[i+1,s.name,s.role+(s.client?' / '+s.client:''),String(s.abs),fRp(s.gross),s.advDed>0?fRp(s.advDed):'Nil',fRp(s.net),s.cp>0?fRp(s.cp):'Nil',s.cp>0?fRp(s.margin):'Nil',s.paid?'PAID':'PENDING']),
-      foot:[['','TOTAL','',monSalF.reduce((s,x)=>s+x.abs,0),fRp(tG),fRp(tAd),fRp(tN),fRp(tC),fRp(mg),'']],
+    const tMR=monSalF.reduce((s,x)=>s+Number(x.mRate||0),0),tDiff=tC-tMR;
+    doc.autoTable({startY:y,head:[['Sr.','Staff Name','Absents','Advance','Cheque Amount','Monthly Salary','Difference']],
+      body:monSalF.map((s,i)=>{const diff=Number(s.cp||0)-Number(s.mRate||0);return[i+1,s.name,String(s.abs),s.advDed>0?fRp(s.advDed):'Nil',s.cp>0?fRp(s.cp):'Nil',fRp(s.mRate),(diff>=0?'+':'')+fRp(diff)];}),
+      foot:[['','TOTAL',monSalF.reduce((s,x)=>s+x.abs,0),fRp(tAd),fRp(tC),fRp(tMR),(tDiff>=0?'+':'')+fRp(tDiff)]],
       styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},footStyles:{...TF},
-      columnStyles:{0:{cellWidth:8,halign:'center'},3:{halign:'center'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'},7:{halign:'right'},8:{halign:'right'},9:{halign:'center',cellWidth:16}},
-      didParseCell:d=>{if(d.section==='body'&&d.column.index===9){d.cell.styles.textColor=d.cell.raw==='PAID'?GRN_:RED_;d.cell.styles.fontStyle='bold';}if(d.section==='foot'){d.cell.styles.textColor=BLK;}}});
+      columnStyles:{0:{cellWidth:8,halign:'center'},2:{halign:'center'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}},
+      didParseCell:d=>{if(d.section==='body'&&d.column.index===6){d.cell.styles.textColor=String(d.cell.raw).startsWith('-')?RED_:GRN_;d.cell.styles.fontStyle='bold';}if(d.section==='foot'){d.cell.styles.textColor=d.column.index===6?(tDiff>=0?GRN_:RED_):BLK;}}});
     y=doc.lastAutoTable.finalY+6;}
   if(mChq.length){if(y>235){doc.addPage();pdfPage(doc,'MONTHLY REPORT',lbl,[],1,1);y=35;}
     y=secHead(doc,'Cheque Returns — '+lbl,y);
@@ -1226,7 +1230,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   const fyM=[];
   for(let m=4;m<=12;m++)fyM.push({value:m,yr:aFY,label:new Date(aFY,m-1,1).toLocaleString('en-IN',{month:'long'})+' '+aFY});
   for(let m=1;m<=3;m++)fyM.push({value:m,yr:aFY+1,label:new Date(aFY+1,m-1,1).toLocaleString('en-IN',{month:'long'})+' '+(aFY+1)});
-  const defIdx=fyM.findIndex(x=>x.value===now.getMonth()+1&&x.yr===(now.getMonth()>=3?now.getFullYear():now.getFullYear()));
+  const{m:_effM,y:_effY}=effTargetMY(now);const defIdx=fyM.findIndex(x=>x.value===_effM&&x.yr===_effY);
   const[selIdx,setSelIdx]=useState(defIdx>=0?defIdx:0);
   const mon=fyM[selIdx].value, yr=fyM[selIdx].yr;
   // Per-staff state: absences and cp overrides
@@ -1468,7 +1472,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   const fyM=[];
   for(let m=4;m<=12;m++)fyM.push({value:m,yr:aFY,label:new Date(aFY,m-1,1).toLocaleString('en-IN',{month:'long'})+' '+aFY});
   for(let m=1;m<=3;m++)fyM.push({value:m,yr:aFY+1,label:new Date(aFY+1,m-1,1).toLocaleString('en-IN',{month:'long'})+' '+(aFY+1)});
-  const defIdx=fyM.findIndex(x=>x.value===now.getMonth()+1&&x.yr===(now.getMonth()>=3?now.getFullYear():now.getFullYear()));
+  const{m:_effM,y:_effY}=effTargetMY(now);const defIdx=fyM.findIndex(x=>x.value===_effM&&x.yr===_effY);
   const[selIdx,setSelIdx]=useState(defIdx>=0?defIdx:0);
   const[showMonthPicker,setShowMonthPicker]=useState(true);
   const mon=fyM[selIdx].value,yr=fyM[selIdx].yr;
@@ -1559,7 +1563,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
         <div style=${{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:7,marginTop:14}}>
           ${fyM.map((m,i)=>{
             const count=sal.filter(s=>s.mon===m.value&&s.yr===m.yr).length;
-            const isNow=m.value===now.getMonth()+1&&m.yr===(now.getMonth()>=3?now.getFullYear():now.getFullYear());
+            const{m:_effM,y:_effY}=effTargetMY(now);const isNow=m.value===_effM&&m.yr===_effY;
             const isSel=selIdx===i;
             const shortName=new Date(m.yr,m.value-1,1).toLocaleString('en-IN',{month:'short'});
             const yrShort=String(m.yr).slice(2);
