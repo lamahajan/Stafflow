@@ -2963,15 +2963,14 @@ function SyncSec({cfg,setCfg,fbSt,setFbSt,T,msg}){
   const sl={connected:'Connected ✓',connecting:'Connecting…',error:'Error',disconnected:'Not Connected'}[fbSt]||'Unknown';
   return html`<div style=${{display:'flex',flexDirection:'column',gap:14}}>
     <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}><div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style=${{fontSize:13,fontWeight:800,color:T.txt}}>Firebase Realtime Sync</div><div style=${{fontSize:12,color:sc,marginTop:3,fontWeight:700}}>${sl}</div></div><div style=${{width:12,height:12,borderRadius:'50%',background:sc}}/></div></div>
-    ${choice&&html`<div style=${{background:T.acc+'12',border:`1px solid ${T.accB}`,borderRadius:12,padding:14}}>
-      <div style=${{fontSize:12,fontWeight:800,color:T.acc,marginBottom:4}}>Choose a sync direction</div>
-      <div style=${{fontSize:11,color:T.sub,marginBottom:10,lineHeight:1.5}}><b>Push</b> — send this device's data to the server (the server's data will be overwritten). <b>Pull</b> — bring the server's data to this device (this device's local data will be overwritten).</div>
+    ${choice&&html`<${Mdl} title="Choose a sync direction" onClose=${()=>setChoice(false)} T=${T}>
+      <div style=${{fontSize:12,color:T.sub,marginBottom:16,lineHeight:1.6}}><b style=${{color:T.txt}}>Push</b> — send this device's data to the server (the server's data will be overwritten).<br/><b style=${{color:T.txt}}>Pull</b> — bring the server's data to this device (this device's local data will be overwritten).</div>
       <div style=${{display:'flex',gap:8}}>
-        <button onClick=${doPush} disabled=${busy} style=${{flex:1,background:T.blu,color:'#fff',border:'none',borderRadius:8,padding:'9px 0',fontSize:12,fontWeight:800,cursor:busy?'not-allowed':'pointer',opacity:busy?.6:1,fontFamily:'inherit'}}>⬆️ Push Local → Server</button>
-        <button onClick=${doPull} disabled=${busy} style=${{flex:1,background:T.grn,color:'#fff',border:'none',borderRadius:8,padding:'9px 0',fontSize:12,fontWeight:800,cursor:busy?'not-allowed':'pointer',opacity:busy?.6:1,fontFamily:'inherit'}}>⬇️ Pull Server → Local</button>
+        <button onClick=${doPush} disabled=${busy} style=${{flex:1,background:T.blu,color:'#fff',border:'none',borderRadius:10,padding:'12px 0',fontSize:13,fontWeight:800,cursor:busy?'not-allowed':'pointer',opacity:busy?.6:1,fontFamily:'inherit'}}>⬆️ Push Local → Server</button>
+        <button onClick=${doPull} disabled=${busy} style=${{flex:1,background:T.grn,color:'#fff',border:'none',borderRadius:10,padding:'12px 0',fontSize:13,fontWeight:800,cursor:busy?'not-allowed':'pointer',opacity:busy?.6:1,fontFamily:'inherit'}}>⬇️ Pull Server → Local</button>
       </div>
-      <button onClick=${()=>setChoice(false)} style=${{width:'100%',marginTop:8,background:'transparent',border:'none',color:T.mut,fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>Decide later</button>
-    </div>`}
+      <button onClick=${()=>setChoice(false)} style=${{width:'100%',marginTop:12,background:'transparent',border:'none',color:T.mut,fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit',padding:'6px 0'}}>Decide later</button>
+    <//>`}
     <div style=${{background:T.acc+'12',border:`1px solid ${T.accB}`,borderRadius:12,padding:13}}><div style=${{fontSize:11,fontWeight:800,color:T.acc,marginBottom:10}}>HOW TO SET UP (FREE)</div>${['Go to console.firebase.google.com','Create project → Realtime Database → Test mode','Project Settings → Add web app → Register','Copy apiKey and databaseURL below'].map((t,i)=>html`<div key=${i} style=${{display:'flex',gap:8,marginBottom:6}}><span style=${{color:T.acc,fontSize:12,fontWeight:800,flexShrink:0}}>${i+1}.</span><span style=${{color:T.sub,fontSize:12}}>${t}</span></div>`)}</div>
     <${Inp} T=${T} label="Firebase API Key *" value=${apiKey} onChange=${e=>setApiKey(e.target.value)} placeholder="AIzaSy…"/>
     <${Inp} T=${T} label="Database URL *" value=${dbURL} onChange=${e=>setDbURL(e.target.value)} placeholder="https://your-project.firebaseio.com"/>
