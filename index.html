@@ -2918,16 +2918,22 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
             const epfPFAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErPF??3.67)/100));
             const epsAmt=Math.round(Math.min(rate,st.epsWageCeil??15000)*((st.epfErEPS??8.33)/100));
             const esicErAmt=rate<=esicWL?Math.round(rate*((st.esicEr??3.25)/100)):0;
-            const mDedN=epfEmpAmt+esicEmpAmt+epfPFAmt+epsAmt+esicErAmt;
-            const empTotal=epfEmpAmt+esicEmpAmt;
-            const erTotal=epfPFAmt+epsAmt+esicErAmt;
-            const rows=[
-              ['EPF Employee ('+(st.epfEmp??12)+'%)',epfEmpAmt],
-              ['EPF Employer ('+(st.epfErPF??3.67)+'%)',epfPFAmt],
-              ['EPS Employer ('+(st.epfErEPS??8.33)+'%)',epsAmt],
-              ...(esicEmpAmt>0?[['ESIC Employee ('+(st.esicEmp??0.75)+'%)',esicEmpAmt]]:[]),
-              ...(esicErAmt>0?[['ESIC Employer ('+(st.esicEr??3.25)+'%)',esicErAmt]]:[]),
+            // Only show/total a component if this category actually uses it — via either the Margin chips or the Cheque Amount chips.
+            const selM={...DEF_CUSTOM_SEL,...((cfg.catMarginCustom||{})[form.role]||{})};
+            const selC={...DEF_CHEQUE_SEL,...((cfg.catChequeCustom||{})[form.role]||{})};
+            const isActive=k=>(selM[k]&&selM[k]!=='none')||(selC[k]&&selC[k]!=='none');
+            const allRows=[
+              ['epfEmp','EPF Employee ('+(st.epfEmp??12)+'%)',epfEmpAmt,'emp'],
+              ['epfPF','EPF Employer ('+(st.epfErPF??3.67)+'%)',epfPFAmt,'er'],
+              ['eps','EPS Employer ('+(st.epfErEPS??8.33)+'%)',epsAmt,'er'],
+              ['esicEmp','ESIC Employee ('+(st.esicEmp??0.75)+'%)',esicEmpAmt,'emp'],
+              ['esicEr','ESIC Employer ('+(st.esicEr??3.25)+'%)',esicErAmt,'er'],
             ];
+            const rows=allRows.filter(([k,,amt])=>isActive(k)&&amt>0).map(([,lbl,amt])=>[lbl,amt]);
+            const empTotal=allRows.filter(([k,,,side])=>side==='emp'&&isActive(k)).reduce((s,[,,amt])=>s+amt,0);
+            const erTotal=allRows.filter(([k,,,side])=>side==='er'&&isActive(k)).reduce((s,[,,amt])=>s+amt,0);
+            const mDedN=empTotal+erTotal;
+            if(!rows.length)return null;
             return html`<div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:11,padding:'10px 12px'}}>
               <div style=${{fontSize:9,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:8}}>DEDUCTION BREAKDOWN (auto-calculated, based on Pay as per Record)</div>
               ${rows.map(([lbl,amt])=>html`<div style=${{display:'flex',justifyContent:'space-between',marginBottom:5}}>
