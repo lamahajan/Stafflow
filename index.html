@@ -896,7 +896,7 @@ async function genPDF(mon,yr,monSal,allAdv,allChq,staff,msgFn,cfg){
   const ds=new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'});
   const rptStaffIds=new Set(staff.filter(s=>s.inReport!==false).map(s=>s.id));
   const monSalF=monSal.filter(s=>rptStaffIds.has(s.sid));
-  const tN=monSalF.reduce((s,x)=>s+Number(x.net),0),tAd=monSalF.reduce((s,x)=>s+Number(x.advDed),0),tC=monSalF.reduce((s,x)=>s+Number(x.cp||0),0),tMR=monSalF.reduce((s,x)=>s+Number(x.mRate||0),0),tDiff=tC-tMR;
+  const tN=monSalF.reduce((s,x)=>s+Number(x.net),0),tAd=monSalF.reduce((s,x)=>s+Number(x.advDed),0),tC=monSalF.reduce((s,x)=>s+Number(x.cp||0),0),tMR=monSalF.reduce((s,x)=>s+Number(x.gross!==undefined?x.gross:x.mRate||0),0),tDiff=tC-tMR;
   const mChq=allChq.filter(c=>{const d=new Date(c.date);return d.getMonth()+1===mon&&d.getFullYear()===yr;});
   const pAdL=allAdv.filter(a=>a.status==='pending'),pChqL=allChq.filter(c=>c.status==='pending');
   const pAmt=pAdL.reduce((s,a)=>s+Number(a.amount),0)+pChqL.reduce((s,c)=>s+Number(c.expected||c.ret),0);
@@ -906,7 +906,7 @@ async function genPDF(mon,yr,monSal,allAdv,allChq,staff,msgFn,cfg){
   if(pAmt>0){doc.setFillColor(255,247,237);doc.setDrawColor(251,191,36);doc.setLineWidth(0.3);doc.roundedRect(14,y,182,8,1.5,1.5,'FD');doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(...AMB);doc.text('⚠  OUTSTANDING DUES: '+fRp(pAmt)+' ('+pAdL.length+' advances, '+pChqL.length+' unsettled cheques)',17,y+5.2);y+=11;}
   if(monSalF.length){y=secHead(doc,'Salary Statement — '+lbl,y);
     doc.autoTable({startY:y,head:[['Sr.','Staff Name','Absents','Advance','Cheque Amount','Monthly Salary','Difference']],
-      body:monSalF.map((s,i)=>{const diff=Number(s.cp||0)-Number(s.mRate||0);return[i+1,s.name,String(s.abs),s.advDed>0?fRp(s.advDed):'Nil',s.cp>0?fRp(s.cp):'Nil',fRp(s.mRate),(diff>=0?'+':'')+fRp(diff)];}),
+      body:monSalF.map((s,i)=>{const salAfterAbs=s.gross!==undefined?Number(s.gross):Number(s.mRate||0);const diff=Number(s.cp||0)-salAfterAbs;return[i+1,s.name,String(s.abs),s.advDed>0?fRp(s.advDed):'Nil',s.cp>0?fRp(s.cp):'Nil',fRp(salAfterAbs),(diff>=0?'+':'')+fRp(diff)];}),
       foot:[['','TOTAL',monSalF.reduce((s,x)=>s+x.abs,0),fRp(tAd),fRp(tC),fRp(tMR),(tDiff>=0?'+':'')+fRp(tDiff)]],
       styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},footStyles:{...TF},
       columnStyles:{0:{cellWidth:8,halign:'center'},2:{halign:'center'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}},
@@ -1287,7 +1287,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const cutV=advCutMap[s.id];
     const advAmt=cutV!==undefined&&cutV!==''?Math.min(Math.max(0,parseFloat(cutV)||0),gross):Math.min(totalPending,gross);
     const net=Math.max(0,gross-advAmt);
-    const cpN=cpV; const margin=roundAmt(cpN-(Number(s.mRate)||0)+marginAddOn(s.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory);
+    const cpN=cpV; const margin=roundAmt(cpN-gross+marginAddOn(s.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory);
     return{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,totalPending,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
   };
   const processOne=async(s)=>{
@@ -1550,7 +1550,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   };
   const activeWD=leftWD||joinWD;
   const process=()=>{
-    if(!proc)return;const{pDay,absDed,gross,advAmt,net,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calc(proc,abs,advD,activeWD);const cpN=Number(cpV)||0,margin=roundAmt(cpN-(Number(proc.mRate)||0)+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory);
+    if(!proc)return;const{pDay,absDed,gross,advAmt,net,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calc(proc,abs,advD,activeWD);const cpN=Number(cpV)||0,margin=roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory);
     setSal([...sal,{id:uid(),sid:proc.id,name:proc.name,role:proc.role,client:proc.client||'',mon,yr,abs:parseFloat(abs)||0,mRate:proc.mRate,recPay:proc.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,cp:cpN,margin,note,paid:true,joinWD:joinWD||null,leftWD:leftWD||null,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}]);
     let rem=advAmt;
     setChq(chq.map(c=>{if(c.staffId!==proc.id||c.status!=='pending'||rem<=0)return c;const tk=Math.min(rem,Number(c.expected||c.ret));rem-=tk;return tk>=(Number(c.expected||c.ret))?{...c,status:'settled',settledOn:today(),shortfall:0}:c;}));
@@ -1726,8 +1726,8 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
             <${RR} T=${T} label="Gross" value=${fR(gross.toFixed(2))} bold border=${true}/>
             <${RR} T=${T} label="Deducted" value=${'−'+fR(advAmt.toFixed(2))} accent=${T.red}/>
             <${RR} T=${T} label="Net Salary" value=${fR(net.toFixed(2))} bold accent=${T.acc} border=${true}/>
-            ${cpN>0&&html`<div><${RR} T=${T} label="Client Paid" value=${fR(cpN)} accent=${T.blu}/><div style=${{height:5}}/><${RR} T=${T} label="Margin" value=${(roundAmt(cpN-(Number(proc.mRate)||0)+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory)>=0?'+':'')+fR(roundAmt(cpN-(Number(proc.mRate)||0)+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory))} bold accent=${roundAmt(cpN-(Number(proc.mRate)||0)+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory)>=0?T.grn:T.red} border=${true}/></div>`}
-            ${cpN>0&&roundAmt(cpN-(Number(proc.mRate)||0)+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory)>0&&html`<div style=${{marginTop:9,background:T.grn+'14',borderRadius:8,padding:'7px 10px',fontSize:11,fontWeight:700,color:T.txt}}>✓ Cheque return of ${fR(roundAmt(cpN-(Number(proc.mRate)||0)+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory))} auto-created</div>`}
+            ${cpN>0&&html`<div><${RR} T=${T} label="Client Paid" value=${fR(cpN)} accent=${T.blu}/><div style=${{height:5}}/><${RR} T=${T} label="Margin" value=${(roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory)>=0?'+':'')+fR(roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory))} bold accent=${roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory)>=0?T.grn:T.red} border=${true}/></div>`}
+            ${cpN>0&&roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory)>0&&html`<div style=${{marginTop:9,background:T.grn+'14',borderRadius:8,padding:'7px 10px',fontSize:11,fontWeight:700,color:T.txt}}>✓ Cheque return of ${fR(roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory))} auto-created</div>`}
           </div>
           <${Inp} T=${T} label="Note (optional)" value=${note} onChange=${e=>setNote(e.target.value)} placeholder="sick leave, half day…"/>
           <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setProc(null)}/><${Btn} T=${T} full ch="Process & Pay" onClick=${process}/></div>
@@ -2032,7 +2032,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
     // keep original advDed (deductions already applied)
     const advDed=Number(e.advDed||0);
     const net=Math.max(0,gross-advDed);
-    const margin=roundAmt(cpN-(Number(e.mRate)||0)+marginAddOn(e.role,{epfEmp:e.epfEmpAmt,epfPF:e.epfPFAmt,eps:e.epsAmt,esicEmp:e.esicEmpAmt,esicEr:e.esicErAmt},cfg),cfg.statutory);
+    const margin=roundAmt(cpN-gross+marginAddOn(e.role,{epfEmp:e.epfEmpAmt,epfPF:e.epfPFAmt,eps:e.epsAmt,esicEmp:e.esicEmpAmt,esicEr:e.esicErAmt},cfg),cfg.statutory);
     const updatedSal={...e,abs:absN,pDay,absDed,gross,net,cp:cpN,margin,note:editSalForm.note,paid:editSalForm.paid,mDedAmt};
     setSal(sal.map(s=>s.id===e.id?updatedSal:s));
     // Recalculate future salary records of this staff (those that come AFTER this month)
@@ -2199,7 +2199,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
       const gross=Math.max(0,proBase-absDed-mDedAmt);
       const advDed=Number(e.advDed||0);
       const previewNet=Math.max(0,gross-advDed);
-      const previewMargin=roundAmt(cpN-(Number(e.mRate)||0)+marginAddOn(e.role,{epfEmp:e.epfEmpAmt,epfPF:e.epfPFAmt,eps:e.epsAmt,esicEmp:e.esicEmpAmt,esicEr:e.esicErAmt},cfg),cfg.statutory);
+      const previewMargin=roundAmt(cpN-gross+marginAddOn(e.role,{epfEmp:e.epfEmpAmt,epfPF:e.epfPFAmt,eps:e.epsAmt,esicEmp:e.esicEmpAmt,esicEr:e.esicErAmt},cfg),cfg.statutory);
       return html`<${Mdl} title=${'✏️ Edit Salary — '+mName(e.mon,e.yr)} onClose=${()=>setEditSalEntry(null)} T=${T}>
         <div style=${{display:'flex',flexDirection:'column',gap:13}}>
           <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:11,padding:11}}>
