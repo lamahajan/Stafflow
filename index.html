@@ -1509,6 +1509,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   const[selCat,setSelCat]=useState('ALL');
   useEffect(()=>{ld('sf8_att').then(d=>{setAttData(d&&d[yr+'_'+mon]?d[yr+'_'+mon]:{});});},[mon,yr]);
   const monSal=sal.filter(s=>s.mon===mon&&s.yr===yr);
+  const recMargin=(s,cfg)=>roundAmt((Number(s.cp)||0)-Number(s.net||0)+marginAddOn(s.role,{epfEmp:s.epfEmpAmt,epfPF:s.epfPFAmt,eps:s.epsAmt,esicEmp:s.esicEmpAmt,esicEr:s.esicErAmt},cfg),cfg.statutory);
   const undone=staff.filter(s=>!monSal.map(x=>x.sid).includes(s.id));
   const catMatch=r=>selCat==='ALL'||r===selCat;
   const filtUndone=(qS.trim()?undone.filter(s=>s.name.toLowerCase().includes(qS.toLowerCase())||(s.client||'').toLowerCase().includes(qS.toLowerCase())):undone).filter(s=>catMatch(s.role));
