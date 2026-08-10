@@ -896,7 +896,7 @@ async function genPDF(mon,yr,monSal,allAdv,allChq,staff,msgFn,cfg){
   const ds=new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'});
   const rptStaffIds=new Set(staff.filter(s=>s.inReport!==false).map(s=>s.id));
   const monSalF=monSal.filter(s=>rptStaffIds.has(s.sid));
-  const tN=monSalF.reduce((s,x)=>s+Number(x.net),0),tAd=monSalF.reduce((s,x)=>s+Number(x.advDed),0),tC=monSalF.reduce((s,x)=>s+Number(x.cp||0),0),tMR=monSalF.reduce((s,x)=>s+Number(x.gross!==undefined?x.gross:x.mRate||0),0),tDiff=tC-tMR;
+  const tN=monSalF.reduce((s,x)=>s+Number(x.net),0),tAd=monSalF.reduce((s,x)=>s+Number(x.advDed),0),tC=monSalF.reduce((s,x)=>s+Number(x.cp||0),0),tMR=monSalF.reduce((s,x)=>s+Number((x.gross!==undefined?x.gross:x.mRate||0))+Number(x.mDedAmt||0),0),tDiff=tC-tMR;
   const mChq=allChq.filter(c=>{const d=new Date(c.date);return d.getMonth()+1===mon&&d.getFullYear()===yr;});
   const pAdL=allAdv.filter(a=>a.status==='pending'),pChqL=allChq.filter(c=>c.status==='pending');
   const pAmt=pAdL.reduce((s,a)=>s+Number(a.amount),0)+pChqL.reduce((s,c)=>s+Number(c.expected||c.ret),0);
@@ -906,7 +906,7 @@ async function genPDF(mon,yr,monSal,allAdv,allChq,staff,msgFn,cfg){
   if(pAmt>0){doc.setFillColor(255,247,237);doc.setDrawColor(251,191,36);doc.setLineWidth(0.3);doc.roundedRect(14,y,182,8,1.5,1.5,'FD');doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(...AMB);doc.text('⚠  OUTSTANDING DUES: '+fRp(pAmt)+' ('+pAdL.length+' advances, '+pChqL.length+' unsettled cheques)',17,y+5.2);y+=11;}
   if(monSalF.length){y=secHead(doc,'Salary Statement — '+lbl,y);
     doc.autoTable({startY:y,head:[['Sr.','Staff Name','Absents','Advance','Cheque Amount','Monthly Salary','Difference']],
-      body:monSalF.map((s,i)=>{const salAfterAbs=s.gross!==undefined?Number(s.gross):Number(s.mRate||0);const diff=Number(s.cp||0)-salAfterAbs;return[i+1,s.name,String(s.abs),s.advDed>0?fRp(s.advDed):'Nil',s.cp>0?fRp(s.cp):'Nil',fRp(salAfterAbs),(diff>=0?'+':'')+fRp(diff)];}),
+      body:monSalF.map((s,i)=>{const salAfterAbs=Number(s.gross!==undefined?s.gross:s.mRate||0)+Number(s.mDedAmt||0);const diff=Number(s.cp||0)-salAfterAbs;return[i+1,s.name,String(s.abs),s.advDed>0?fRp(s.advDed):'Nil',s.cp>0?fRp(s.cp):'Nil',fRp(salAfterAbs),(diff>=0?'+':'')+fRp(diff)];}),
       foot:[['','TOTAL',monSalF.reduce((s,x)=>s+x.abs,0),fRp(tAd),fRp(tC),fRp(tMR),(tDiff>=0?'+':'')+fRp(tDiff)]],
       styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},footStyles:{...TF},
       columnStyles:{0:{cellWidth:8,halign:'center'},2:{halign:'center'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}},
@@ -1281,21 +1281,20 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const esicErAmt=esicApply?Math.round(rate*((st.esicEr??3.25)/100)):0;
     const mDedAmt=epfEmpAmt+epfErAmt+esicEmpAmt+esicErAmt;
     const gross=Math.max(0,proBase-absDed-mDedAmt);
-    const absOnly=Math.max(0,proBase-absDed); // for margin/report — absent cut only, statutory NOT subtracted
     const pA=adv.filter(a=>a.staffId===s.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);
     const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);
     const totalPending=pA+pC;
     const cutV=advCutMap[s.id];
     const advAmt=cutV!==undefined&&cutV!==''?Math.min(Math.max(0,parseFloat(cutV)||0),gross):Math.min(totalPending,gross);
     const net=Math.max(0,gross-advAmt);
-    const cpN=cpV; const margin=roundAmt(cpN-absOnly,cfg.statutory);
-    return{pDay,gross,absOnly,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,totalPending,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
+    const cpN=cpV; const margin=roundAmt(cpN-gross+marginAddOn(s.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory);
+    return{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,totalPending,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
   };
   const processOne=async(s)=>{
     const absV=getAbs(s.id), cpV=getCp(s.id,s);
-    const{pDay,gross,absOnly,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calcSal(s,absV,cpV);
+    const{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calcSal(s,absV,cpV);
     const entry={id:uid(),sid:s.id,name:s.name,role:s.role,client:s.client||'',mon,yr,
-      abs:absV,mRate:s.mRate,recPay:s.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,salAfterAbs:absOnly,advDed:advAmt,net,
+      abs:absV,mRate:s.mRate,recPay:s.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,
       cp:cpN,margin,note:'',paid:true,joinWD:null,leftWD:null,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
     let newSal=[...sal,entry];
     let newAdv=[...adv], newChq=[...chq], rem=advAmt;
