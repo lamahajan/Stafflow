@@ -1281,20 +1281,21 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const esicErAmt=esicApply?Math.round(rate*((st.esicEr??3.25)/100)):0;
     const mDedAmt=epfEmpAmt+epfErAmt+esicEmpAmt+esicErAmt;
     const gross=Math.max(0,proBase-absDed-mDedAmt);
+    const absOnly=Math.max(0,proBase-absDed); // for margin/report — absent cut only, statutory NOT subtracted
     const pA=adv.filter(a=>a.staffId===s.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);
     const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);
     const totalPending=pA+pC;
     const cutV=advCutMap[s.id];
     const advAmt=cutV!==undefined&&cutV!==''?Math.min(Math.max(0,parseFloat(cutV)||0),gross):Math.min(totalPending,gross);
     const net=Math.max(0,gross-advAmt);
-    const cpN=cpV; const margin=roundAmt(cpN-gross+marginAddOn(s.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory);
-    return{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,totalPending,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
+    const cpN=cpV; const margin=roundAmt(cpN-absOnly,cfg.statutory);
+    return{pDay,gross,absOnly,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,totalPending,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
   };
   const processOne=async(s)=>{
     const absV=getAbs(s.id), cpV=getCp(s.id,s);
-    const{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calcSal(s,absV,cpV);
+    const{pDay,gross,absOnly,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calcSal(s,absV,cpV);
     const entry={id:uid(),sid:s.id,name:s.name,role:s.role,client:s.client||'',mon,yr,
-      abs:absV,mRate:s.mRate,recPay:s.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,
+      abs:absV,mRate:s.mRate,recPay:s.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,salAfterAbs:absOnly,advDed:advAmt,net,
       cp:cpN,margin,note:'',paid:true,joinWD:null,leftWD:null,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
     let newSal=[...sal,entry];
     let newAdv=[...adv], newChq=[...chq], rem=advAmt;
