@@ -906,7 +906,7 @@ async function genPDF(mon,yr,monSal,allAdv,allChq,staff,msgFn,cfg){
   const ds=new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'});
   const rptStaffIds=new Set(staff.filter(s=>s.inReport!==false).map(s=>s.id));
   const monSalF=monSal.filter(s=>rptStaffIds.has(s.sid));
-  const tN=monSalF.reduce((s,x)=>s+Number(x.net),0),tAd=monSalF.reduce((s,x)=>s+Number(x.advDed),0),tC=monSalF.reduce((s,x)=>s+Number(x.cp||0),0),tMR=monSalF.reduce((s,x)=>s+Number((x.gross!==undefined?x.gross:x.mRate||0))+Number(x.mDedAmt||0),0),tDiff=tC-tMR;
+  const tN=monSalF.reduce((s,x)=>s+Number(x.net),0),tAd=monSalF.reduce((s,x)=>s+Number(x.advDed),0),tC=monSalF.reduce((s,x)=>s+Number(x.cp||0),0),tMR=monSalF.reduce((s,x)=>s+Number((x.gross!==undefined?x.gross:x.mRate||0))+Number(x.mDedAmt||0)-Number(x.advDed||0),0),tDiff=tC-tMR;
   const mChq=allChq.filter(c=>{const d=new Date(c.date);return d.getMonth()+1===mon&&d.getFullYear()===yr;});
   const pAdL=allAdv.filter(a=>a.status==='pending'),pChqL=allChq.filter(c=>c.status==='pending');
   const pAmt=pAdL.reduce((s,a)=>s+Number(a.amount),0)+pChqL.reduce((s,c)=>s+Number(c.expected||c.ret),0);
@@ -916,7 +916,7 @@ async function genPDF(mon,yr,monSal,allAdv,allChq,staff,msgFn,cfg){
   if(pAmt>0){doc.setFillColor(255,247,237);doc.setDrawColor(251,191,36);doc.setLineWidth(0.3);doc.roundedRect(14,y,182,8,1.5,1.5,'FD');doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(...AMB);doc.text('⚠  OUTSTANDING DUES: '+fRp(pAmt)+' ('+pAdL.length+' advances, '+pChqL.length+' unsettled cheques)',17,y+5.2);y+=11;}
   if(monSalF.length){y=secHead(doc,'Salary Statement — '+lbl,y);
     doc.autoTable({startY:y,head:[['Sr.','Staff Name','Absents','Advance','Cheque Amount','Monthly Salary','Difference']],
-      body:monSalF.map((s,i)=>{const salAfterAbs=Number(s.gross!==undefined?s.gross:s.mRate||0)+Number(s.mDedAmt||0);const diff=Number(s.cp||0)-salAfterAbs;return[i+1,s.name,String(s.abs),s.advDed>0?fRp(s.advDed):'Nil',s.cp>0?fRp(s.cp):'Nil',fRp(salAfterAbs),(diff>=0?'+':'')+fRp(diff)];}),
+      body:monSalF.map((s,i)=>{const salAfterAbs=Number(s.gross!==undefined?s.gross:s.mRate||0)+Number(s.mDedAmt||0)-Number(s.advDed||0);const diff=Number(s.cp||0)-salAfterAbs;return[i+1,s.name,String(s.abs),s.advDed>0?fRp(s.advDed):'Nil',s.cp>0?fRp(s.cp):'Nil',fRp(salAfterAbs),(diff>=0?'+':'')+fRp(diff)];}),
       foot:[['','TOTAL',monSalF.reduce((s,x)=>s+x.abs,0),fRp(tAd),fRp(tC),fRp(tMR),(tDiff>=0?'+':'')+fRp(tDiff)]],
       styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},footStyles:{...TF},
       columnStyles:{0:{cellWidth:8,halign:'center'},2:{halign:'center'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}},
