@@ -193,16 +193,26 @@ const totalDeduction=(recPay,cfg,role)=>{
   const epsAmt=Math.round(capBase*((st.epfErEPS??8.33)/100));
   const esicEmpAmt=rp<=esicWageLim?Math.round(rp*((st.esicEmp??0.75)/100)):0;
   const esicErAmt=rp<=esicWageLim?Math.round(rp*((st.esicEr??3.25)/100)):0;
+  const active=dedActive(role,cfg);
+  let total=0;
+  if(active.epfEmp)total+=epfEmpAmt;
+  if(active.epfPF)total+=epfPFAmt;
+  if(active.eps)total+=epsAmt;
+  if(active.esicEmp)total+=esicEmpAmt;
+  if(active.esicEr)total+=esicErAmt;
+  return total;
+};
+// Which statutory components are actually "in use" for a category — true only if that category's
+// Margin or Cheque Amount chip selection has it set to add/subtract (not 'none'/unselected).
+// Used to gate what's actually deducted when processing salary — a category with no chips selected
+// should not have anything auto-deducted from Gross/Net, even though the raw statutory amounts are
+// still computed (for reference/preview purposes elsewhere).
+const dedActive=(role,cfg)=>{
+  cfg=cfg||{};
   const selM={...DEF_CUSTOM_SEL,...((cfg.catMarginCustom||{})[role]||{})};
   const selC={...DEF_CHEQUE_SEL,...((cfg.catChequeCustom||{})[role]||{})};
   const isActive=k=>(selM[k]&&selM[k]!=='none')||(selC[k]&&selC[k]!=='none');
-  let total=0;
-  if(isActive('epfEmp'))total+=epfEmpAmt;
-  if(isActive('epfPF'))total+=epfPFAmt;
-  if(isActive('eps'))total+=epsAmt;
-  if(isActive('esicEmp'))total+=esicEmpAmt;
-  if(isActive('esicEr'))total+=esicErAmt;
-  return total;
+  return{epfEmp:isActive('epfEmp'),epfPF:isActive('epfPF'),eps:isActive('eps'),esicEmp:isActive('esicEmp'),esicEr:isActive('esicEr')};
 };
 // Cheque Amount = Pay as per Record minus EPF Employer (3.67%) minus EPS Employer (8.33%), both capped at the EPS wage ceiling, minus ESIC Employee (0.75%, if within the ESIC wage limit).
 const roundAmt=(amt,st)=>{const n=Number(amt)||0;return (st&&st.roundOff10)?Math.round(n/5)*5:n;};
@@ -1279,7 +1289,10 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const esicApply=rate<=esicWL;
     const esicEmpAmt=s.esicOvr!==undefined&&s.esicOvr!==''?Number(s.esicOvr):esicApply?Math.round(rate*((st.esicEmp??0.75)/100)):0;
     const esicErAmt=esicApply?Math.round(rate*((st.esicEr??3.25)/100)):0;
-    const mDedAmt=epfEmpAmt+epfErAmt+esicEmpAmt+esicErAmt;
+    // Only components this category has switched ON (via Margin/Cheque chips in Staff Categories) are actually deducted from Gross/Net —
+    // a category with nothing selected has zero statutory deduction, even though raw amounts above are still computed for reference.
+    const active=dedActive(s.role,cfg);
+    const mDedAmt=(active.epfEmp?epfEmpAmt:0)+(active.epfPF?epfPFAmt:0)+(active.eps?epsAmt:0)+(active.esicEmp?esicEmpAmt:0)+(active.esicEr?esicErAmt:0);
     const gross=Math.max(0,proBase-absDed-mDedAmt);
     const pA=adv.filter(a=>a.staffId===s.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);
     const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);
@@ -1542,7 +1555,10 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const esicApply=rate<=esicWL;
     const esicEmpAmt=Math.round((s.esicOvr!==undefined&&s.esicOvr!==''?Number(s.esicOvr):esicApply?Math.round(rate*((st.esicEmp??0.75)/100)):0)*(effDays/FD));
     const esicErAmt=Math.round((esicApply?Math.round(rate*((st.esicEr??3.25)/100)):0)*(effDays/FD));
-    const mDedAmt=epfEmpAmt+epfErAmt+esicEmpAmt+esicErAmt;
+    // Only components this category has switched ON (via Margin/Cheque chips in Staff Categories) are actually deducted from Gross/Net —
+    // a category with nothing selected has zero statutory deduction, even though raw amounts above are still computed for reference.
+    const active=dedActive(s.role,cfg);
+    const mDedAmt=(active.epfEmp?epfEmpAmt:0)+(active.epfPF?epfPFAmt:0)+(active.eps?epsAmt:0)+(active.esicEmp?esicEmpAmt:0)+(active.esicEr?esicErAmt:0);
     const gross=Math.max(0,proBase-absDed-mDedAmt);
     const advAmt=Math.min(Math.max(0,Number(d2)||0),gross);
     const net=Math.max(0,gross-advAmt);
@@ -1709,12 +1725,13 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
             ${(()=>{
               const st2=cfg.statutory||{};
               if(mDedAmt<=0)return null;
+              const active=dedActive(proc.role,cfg);
               const brows=[
-                ['EPF Employee ('+(st2.epfEmp??12)+'%)',epfEmpAmt,false],
-                ['EPF Employer ('+(st2.epfErPF??3.67)+'%)',epfPFAmt,true],
-                ['EPS Employer ('+(st2.epfErEPS??8.33)+'%)',epsAmt,true],
-                ...(esicEmpAmt>0?[['ESIC Employee ('+(st2.esicEmp??0.75)+'%)',esicEmpAmt,false]]:[]),
-                ...(esicErAmt>0?[['ESIC Employer ('+(st2.esicEr??3.25)+'%)',esicErAmt,true]]:[]),
+                ...(active.epfEmp?[['EPF Employee ('+(st2.epfEmp??12)+'%)',epfEmpAmt,false]]:[]),
+                ...(active.epfPF?[['EPF Employer ('+(st2.epfErPF??3.67)+'%)',epfPFAmt,true]]:[]),
+                ...(active.eps?[['EPS Employer ('+(st2.epfErEPS??8.33)+'%)',epsAmt,true]]:[]),
+                ...(active.esicEmp&&esicEmpAmt>0?[['ESIC Employee ('+(st2.esicEmp??0.75)+'%)',esicEmpAmt,false]]:[]),
+                ...(active.esicEr&&esicErAmt>0?[['ESIC Employer ('+(st2.esicEr??3.25)+'%)',esicErAmt,true]]:[]),
               ];
               const browsTotal=mDedAmt;
               return html`<div style=${{background:T.bg,border:'1px solid '+T.bdr,borderRadius:9,padding:'7px 10px',margin:'4px 0'}}>
@@ -1734,14 +1751,19 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
         </div>
       <//>`;
     })()}
-    ${viewS&&html`<${Mdl} title="Salary Slip" onClose=${()=>setViewS(null)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:9}}>${[['Staff',viewS.name],['Role',viewS.role],['Client',viewS.client||'—'],['Period',mName(viewS.mon,viewS.yr)],['Monthly Rate',fR(viewS.mRate)],['Per Day',fR(Math.round(viewS.pDay))],['Absent',viewS.abs],...((viewS.mDedAmt||0)>0&&(viewS.epfEmpAmt||0)>0?[
+    ${viewS&&(()=>{
+      const vActive=dedActive(viewS.role,cfg);
+      const showEpf=vActive.epfEmp&&(viewS.epfEmpAmt||0)>0;
+      const showEsic=vActive.esicEmp&&(viewS.esicEmpAmt||0)>0;
+      return html`<${Mdl} title="Salary Slip" onClose=${()=>setViewS(null)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:9}}>${[['Staff',viewS.name],['Role',viewS.role],['Client',viewS.client||'—'],['Period',mName(viewS.mon,viewS.yr)],['Monthly Rate',fR(viewS.mRate)],['Per Day',fR(Math.round(viewS.pDay))],['Absent',viewS.abs],...(showEpf?[
   ['EPF (Employee 12%)','−'+fR(viewS.epfEmpAmt||0)],
-  ['  ↳ EPF A/c (Employer '+((viewS.epfPFAmt||0)>0?'3.67%':'')+')',fR(viewS.epfPFAmt||0)],
-  ['  ↳ EPS Pension (Employer '+((viewS.epsAmt||0)>0?'8.33%':'')+')',fR(viewS.epsAmt||0)],
-]:[] ),...((viewS.mDedAmt||0)>0&&(viewS.esicEmpAmt||0)>0?[
+  ...(vActive.epfPF?[['  ↳ EPF A/c (Employer '+((viewS.epfPFAmt||0)>0?'3.67%':'')+')',fR(viewS.epfPFAmt||0)]]:[]),
+  ...(vActive.eps?[['  ↳ EPS Pension (Employer '+((viewS.epsAmt||0)>0?'8.33%':'')+')',fR(viewS.epsAmt||0)]]:[]),
+]:[] ),...(showEsic?[
   ['ESIC (Employee 0.75%)','−'+fR(viewS.esicEmpAmt||0)],
-  ['ESIC (Employer 3.25%)',fR(viewS.esicErAmt||0)],
-]:[] ),...((viewS.mDedAmt||0)>0&&!(viewS.epfEmpAmt)?[['Total Deduction','−'+fR(viewS.mDedAmt)]]:[] ),...((viewS.mDedAmt||0)===0?[['Deductions','Nil']]:[] ),['Gross',fR(viewS.gross)],['Adv.Ded','−'+fR(viewS.advDed)],['Net Salary',fR(viewS.net)],['Client Paid',fR(viewS.cp||0)],['Margin',(viewS.margin>=0?'+':'')+fR(viewS.margin||0)],['Status',viewS.paid?'✅ Paid':'⏳ Pending']].map(([l,v])=>html`<div key=${l} style=${{display:'flex',justifyContent:'space-between',borderBottom:`1px solid ${T.bdr}`,paddingBottom:7}}><span style=${{color:T.sub,fontSize:13}}>${l}</span><span style=${{fontSize:13,fontWeight:['Net Salary','Margin','Gross'].includes(l)?800:600,color:l==='Net Salary'?T.acc:l==='Margin'?(viewS.margin||0)>=0?T.grn:T.red:String(l).includes('Employer')?T.pur:T.txt}}>${v}</span></div>`)}</div><//>`}
+  ...(vActive.esicEr?[['ESIC (Employer 3.25%)',fR(viewS.esicErAmt||0)]]:[]),
+]:[] ),...((viewS.mDedAmt||0)>0&&!showEpf&&!showEsic?[['Total Deduction','−'+fR(viewS.mDedAmt)]]:[] ),...((viewS.mDedAmt||0)===0?[['Deductions','Nil']]:[] ),['Gross',fR(viewS.gross)],['Adv.Ded','−'+fR(viewS.advDed)],['Net Salary',fR(viewS.net)],['Client Paid',fR(viewS.cp||0)],['Margin',(viewS.margin>=0?'+':'')+fR(viewS.margin||0)],['Status',viewS.paid?'✅ Paid':'⏳ Pending']].map(([l,v])=>html`<div key=${l} style=${{display:'flex',justifyContent:'space-between',borderBottom:`1px solid ${T.bdr}`,paddingBottom:7}}><span style=${{color:T.sub,fontSize:13}}>${l}</span><span style=${{fontSize:13,fontWeight:['Net Salary','Margin','Gross'].includes(l)?800:600,color:l==='Net Salary'?T.acc:l==='Margin'?(viewS.margin||0)>=0?T.grn:T.red:String(l).includes('Employer')?T.pur:T.txt}}>${v}</span></div>`)}</div><//>`;
+    })()}
     ${showDisb&&html`<${Mdl} title="📄 Disbursement PDF" onClose=${()=>setShowDisb(false)} T=${T}>
       <div style=${{display:'flex',flexDirection:'column',gap:14}}>
         <div style=${{fontSize:13,color:T.sub}}>Select categories to include in the disbursement sheet. Sheet shows: Staff Name · Absent Days · Net Salary · Signature column.</div>
