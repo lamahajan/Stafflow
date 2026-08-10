@@ -1300,7 +1300,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const cutV=advCutMap[s.id];
     const advAmt=cutV!==undefined&&cutV!==''?Math.min(Math.max(0,parseFloat(cutV)||0),gross):Math.min(totalPending,gross);
     const net=Math.max(0,gross-advAmt);
-    const cpN=cpV; const margin=roundAmt(cpN-gross+marginAddOn(s.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory);
+    const cpN=cpV; const margin=roundAmt(cpN-gross+marginAddOn(s.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg)+advAmt,cfg.statutory);
     return{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,totalPending,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
   };
   const processOne=async(s)=>{
@@ -1566,7 +1566,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   };
   const activeWD=leftWD||joinWD;
   const process=()=>{
-    if(!proc)return;const{pDay,absDed,gross,advAmt,net,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calc(proc,abs,advD,activeWD);const cpN=Number(cpV)||0,margin=roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory);
+    if(!proc)return;const{pDay,absDed,gross,advAmt,net,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calc(proc,abs,advD,activeWD);const cpN=Number(cpV)||0,margin=roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg)+advAmt,cfg.statutory);
     setSal([...sal,{id:uid(),sid:proc.id,name:proc.name,role:proc.role,client:proc.client||'',mon,yr,abs:parseFloat(abs)||0,mRate:proc.mRate,recPay:proc.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,cp:cpN,margin,note,paid:true,joinWD:joinWD||null,leftWD:leftWD||null,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}]);
     let rem=advAmt;
     setChq(chq.map(c=>{if(c.staffId!==proc.id||c.status!=='pending'||rem<=0)return c;const tk=Math.min(rem,Number(c.expected||c.ret));rem-=tk;return tk>=(Number(c.expected||c.ret))?{...c,status:'settled',settledOn:today(),shortfall:0}:c;}));
@@ -1702,6 +1702,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
       const pL=adv.filter(a=>a.staffId===proc.id&&a.status==='pending'),pCL=chq.filter(c=>c.staffId===proc.id&&c.status==='pending');
       const tPA=pL.reduce((s,a)=>s+Number(a.amount),0),tPC=pCL.reduce((s,c)=>s+Number(c.expected||c.ret),0);
       const{pDay,absDed,gross,advAmt,net,proBase,effDays,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calc(proc,abs,advD,activeWD);const cpN=Number(cpV)||0;
+      const margin=roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg)+advAmt,cfg.statutory);
       const isProRata=activeWD!==null;
       const proRataReason=leftWD?'left':'join';
       return html`<${Mdl} title=${'Salary — '+proc.name} onClose=${()=>{setProc(null);setLeftWD(null);setJoinWD(null);}} T=${T}>
@@ -1743,8 +1744,8 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
             <${RR} T=${T} label="Gross" value=${fR(gross.toFixed(2))} bold border=${true}/>
             <${RR} T=${T} label="Deducted" value=${'−'+fR(advAmt.toFixed(2))} accent=${T.red}/>
             <${RR} T=${T} label="Net Salary" value=${fR(net.toFixed(2))} bold accent=${T.acc} border=${true}/>
-            ${cpN>0&&html`<div><${RR} T=${T} label="Client Paid" value=${fR(cpN)} accent=${T.blu}/><div style=${{height:5}}/><${RR} T=${T} label="Margin" value=${(roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory)>=0?'+':'')+fR(roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory))} bold accent=${roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory)>=0?T.grn:T.red} border=${true}/></div>`}
-            ${cpN>0&&roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory)>0&&html`<div style=${{marginTop:9,background:T.grn+'14',borderRadius:8,padding:'7px 10px',fontSize:11,fontWeight:700,color:T.txt}}>✓ Cheque return of ${fR(roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg),cfg.statutory))} auto-created</div>`}
+            ${cpN>0&&html`<div><${RR} T=${T} label="Client Paid" value=${fR(cpN)} accent=${T.blu}/><div style=${{height:5}}/><${RR} T=${T} label="Margin" value=${(margin>=0?'+':'')+fR(margin)} bold accent=${margin>=0?T.grn:T.red} border=${true}/></div>`}
+            ${cpN>0&&margin>0&&html`<div style=${{marginTop:9,background:T.grn+'14',borderRadius:8,padding:'7px 10px',fontSize:11,fontWeight:700,color:T.txt}}>✓ Cheque return of ${fR(margin)} auto-created</div>`}
           </div>
           <${Inp} T=${T} label="Note (optional)" value=${note} onChange=${e=>setNote(e.target.value)} placeholder="sick leave, half day…"/>
           <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setProc(null)}/><${Btn} T=${T} full ch="Process & Pay" onClick=${process}/></div>
@@ -2054,7 +2055,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
     // keep original advDed (deductions already applied)
     const advDed=Number(e.advDed||0);
     const net=Math.max(0,gross-advDed);
-    const margin=roundAmt(cpN-gross+marginAddOn(e.role,{epfEmp:e.epfEmpAmt,epfPF:e.epfPFAmt,eps:e.epsAmt,esicEmp:e.esicEmpAmt,esicEr:e.esicErAmt},cfg),cfg.statutory);
+    const margin=roundAmt(cpN-gross+marginAddOn(e.role,{epfEmp:e.epfEmpAmt,epfPF:e.epfPFAmt,eps:e.epsAmt,esicEmp:e.esicEmpAmt,esicEr:e.esicErAmt},cfg)+advDed,cfg.statutory);
     const updatedSal={...e,abs:absN,pDay,absDed,gross,net,cp:cpN,margin,note:editSalForm.note,paid:editSalForm.paid,mDedAmt};
     setSal(sal.map(s=>s.id===e.id?updatedSal:s));
     // Recalculate future salary records of this staff (those that come AFTER this month)
@@ -2221,7 +2222,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
       const gross=Math.max(0,proBase-absDed-mDedAmt);
       const advDed=Number(e.advDed||0);
       const previewNet=Math.max(0,gross-advDed);
-      const previewMargin=roundAmt(cpN-gross+marginAddOn(e.role,{epfEmp:e.epfEmpAmt,epfPF:e.epfPFAmt,eps:e.epsAmt,esicEmp:e.esicEmpAmt,esicEr:e.esicErAmt},cfg),cfg.statutory);
+      const previewMargin=roundAmt(cpN-gross+marginAddOn(e.role,{epfEmp:e.epfEmpAmt,epfPF:e.epfPFAmt,eps:e.epsAmt,esicEmp:e.esicEmpAmt,esicEr:e.esicErAmt},cfg)+advDed,cfg.statutory);
       return html`<${Mdl} title=${'✏️ Edit Salary — '+mName(e.mon,e.yr)} onClose=${()=>setEditSalEntry(null)} T=${T}>
         <div style=${{display:'flex',flexDirection:'column',gap:13}}>
           <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:11,padding:11}}>
