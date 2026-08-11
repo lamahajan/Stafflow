@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -279,6 +278,9 @@ const getFY=d=>{const x=new Date(d||Date.now());return x.getMonth()>=3?x.getFull
 const fyLbl=fy=>`FY ${fy}-${String(fy+1).slice(2)}`;
 const inFY=(mon,yr,fy)=>(yr===fy&&mon>=4)||(yr===fy+1&&mon<=3);
 const K={staff:'sf8_s',adv:'sf8_a',sal:'sf8_sl',chq:'sf8_c',cats:'sf8_ct',cfg:'sf8_cfg'};
+// Lightweight hash for the Settings PIN — avoids storing it as plain text in localStorage/backup
+// exports. Not cryptographic-grade, but sufficient to stop a casual glance at raw saved data.
+const simpleHash=str=>{let h=0;const s=String(str);for(let i=0;i<s.length;i++){h=(Math.imul(31,h)+s.charCodeAt(i))|0;}return (h>>>0).toString(36);};
 let _db=null;
 const initFB=async fbcfg=>{
   if(!fbcfg?.apiKey||!fbcfg?.databaseURL)return{ok:false,err:'Missing API Key or Database URL'};
@@ -1078,6 +1080,7 @@ function App(){
   const[staff,setStaff]=useState([]);const[adv,setAdv]=useState([]);const[sal,setSal]=useState([]);const[chq,setChq]=useState([]);
   const[cats,setCats]=useState(DEF_CATS);const[cfg,setCfg]=useState({theme:'light',fys:[]});
   const[toast,setToast]=useState(null);const[ready,setReady]=useState(false);const[fbSt,setFbSt]=useState('disconnected');
+  const[setUnlocked,setSetUnlocked]=useState(false);const[pinInput,setPinInput]=useState('');const[pinErr,setPinErr]=useState(false);
   useEffect(()=>{(async()=>{
     const[s,a,sl,c,ct,cf]=await Promise.all([ld(K.staff),ld(K.adv),ld(K.sal),ld(K.chq),ld(K.cats),ld(K.cfg)]);
     if(s)setStaff(s);if(a)setAdv(a);if(sl)setSal(sl);if(c)setChq(c);if(ct)setCats(ct);
@@ -1104,10 +1107,31 @@ function App(){
     setReady(true);
   })();},[]);
   const msg=(m,type='ok')=>{setToast({msg:m,type});setTimeout(()=>setToast(null),2600);};
-  const pS=d=>{setStaff(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.staff,nd);return nd;});};const pA=d=>{setAdv(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.adv,nd);return nd;});};const pSl=d=>{setSal(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.sal,nd);return nd;});};const pC=d=>{setChq(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.chq,nd);return nd;});};const pCat=d=>{setCats(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.cats,nd);return nd;});};const pCfg=d=>{setCfg(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.cfg,nd);return nd;});};
+  const pS=d=>{setStaff(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.staff,nd);return nd;});};
+  // Raw setters — used by Settings, which always works with the full, unfiltered staff/sal/adv/chq.
+  const pARaw=d=>{setAdv(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.adv,nd);return nd;});};
+  const pSlRaw=d=>{setSal(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.sal,nd);return nd;});};
+  const pCRaw=d=>{setChq(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.chq,nd);return nd;});};
+  // Merge-safe setters — used by every other tab, which only ever sees the VISIBLE (enabled-category)
+  // subset of adv/sal/chq. Any array they build (via spread/map/filter on that subset) only reflects
+  // that subset, so before persisting we always re-merge back whatever records belong to
+  // disabled-category staff (from the true previous state) — a save from a filtered view can never
+  // delete or duplicate them.
+  const visIdsNow=()=>{const dc=cfg.disabledCats||[];return new Set(staff.filter(s=>!dc.includes(s.role)).map(s=>s.id));};
+  const pA=d=>{setAdv(prev=>{const vIds=visIdsNow();const hidden=prev.filter(x=>!vIds.has(x.staffId));const nd=typeof d==='function'?d(prev.filter(x=>vIds.has(x.staffId))):d;const merged=[...hidden,...nd];sv(K.adv,merged);return merged;});};
+  const pSl=d=>{setSal(prev=>{const vIds=visIdsNow();const hidden=prev.filter(x=>!vIds.has(x.sid));const nd=typeof d==='function'?d(prev.filter(x=>vIds.has(x.sid))):d;const merged=[...hidden,...nd];sv(K.sal,merged);return merged;});};
+  const pC=d=>{setChq(prev=>{const vIds=visIdsNow();const hidden=prev.filter(x=>!vIds.has(x.staffId));const nd=typeof d==='function'?d(prev.filter(x=>vIds.has(x.staffId))):d;const merged=[...hidden,...nd];sv(K.chq,merged);return merged;});};
+  const pCat=d=>{setCats(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.cats,nd);return nd;});};const pCfg=d=>{setCfg(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.cfg,nd);return nd;});};
   const T=TH[cfg.theme]||TH.dark;
+  const disabledCats=cfg.disabledCats||[];
+  const visCats=cats.filter(c=>!disabledCats.includes(c));
+  const visStaff=staff.filter(s=>!disabledCats.includes(s.role));
+  const visStaffIds=new Set(visStaff.map(s=>s.id));
+  const visSal=sal.filter(s=>visStaffIds.has(s.sid));
+  const visAdv=adv.filter(a=>visStaffIds.has(a.staffId));
+  const visChq=chq.filter(c=>visStaffIds.has(c.staffId));
   const catC=role=>CC[cats.indexOf(role)%CC.length]||T.acc;
-  const ctx={T,cats,catC,cfg,msg,fbSt,setFbSt,pCfg,setTab};
+  const ctx={T,cats:visCats,catC,cfg,msg,fbSt,setFbSt,pCfg,setTab};
   const aFY=cfg.activeFY||(cfg.fys?.length>0?cfg.fys[cfg.fys.length-1]:getFY());
   const NAV=[{n:'grid',l:'Dashboard',t:0},{n:'card',l:'Salary',t:1},{n:'dlr',l:'Advances',t:2},{n:'chk',l:'Cheques',t:3},{n:'set',l:'Settings',t:4}];
   if(!ready)return html`<div style=${{background:'#f2f2f7',minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:20}}>
@@ -1132,7 +1156,7 @@ function App(){
         <div style=${{background:`linear-gradient(135deg,${T.acc},${T.accAlt})`,borderRadius:11,padding:9,display:'flex'}}><${Ico} n="ppl" s=${18} c="#fff"/></div>
         <div>
           <div style=${{fontSize:16,fontWeight:900,color:T.txt}}>StaffFlow</div>
-          <div style=${{fontSize:10,color:T.sub}}>${fyLbl(aFY)} · ${staff.length} staff</div>
+          <div style=${{fontSize:10,color:T.sub}}>${fyLbl(aFY)} · ${visStaff.length} staff</div>
         </div>
       </div>
       <!-- Nav Items -->
@@ -1159,7 +1183,7 @@ function App(){
     <div class="sf-header sf-mobile-header" style=${{background:T.surf,borderBottom:`1px solid ${T.bdr}`,padding:'14px 16px 10px',position:'sticky',top:0,zIndex:50,backdropFilter:'saturate(180%) blur(20px)',WebkitBackdropFilter:'saturate(180%) blur(20px)'}}>
       <div style=${{display:'flex',alignItems:'center',gap:10}}>
         <div style=${{background:`linear-gradient(135deg,${T.acc},${T.accAlt})`,borderRadius:11,padding:8,display:'flex',flexShrink:0}}><${Ico} n="ppl" s=${18} c="#fff"/></div>
-        <div style=${{flex:1,minWidth:0}}><div style=${{fontSize:17,fontWeight:900,color:T.txt}}>StaffFlow</div><div style=${{fontSize:11,color:T.sub,whiteSpace:'normal',wordBreak:'break-word'}}>${fyLbl(aFY)} · ${staff.length} staff</div></div>
+        <div style=${{flex:1,minWidth:0}}><div style=${{fontSize:17,fontWeight:900,color:T.txt}}>StaffFlow</div><div style=${{fontSize:11,color:T.sub,whiteSpace:'normal',wordBreak:'break-word'}}>${fyLbl(aFY)} · ${visStaff.length} staff</div></div>
         <div style=${{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
           <div title=${fbSt} style=${{width:8,height:8,borderRadius:'50%',background:fbSt==='connected'?T.grn:fbSt==='connecting'?T.yel:fbSt==='error'?T.red:T.mut,flexShrink:0}}/>
           <button onClick=${()=>pCfg({...cfg,theme:cfg.theme==='dark'?'light':'dark'})} style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:8,padding:6,cursor:'pointer',display:'flex',flexShrink:0}}><${Ico} n=${cfg.theme==='dark'?'sun':'moon'} s=${16} c=${T.sub}/></button>
@@ -1172,12 +1196,12 @@ function App(){
       <div class="sf-content">
         <${Toast} t=${toast} T=${T}/>
         <div key=${tab} class="fu">
-          ${tab===0&&html`<${PgDash}  staff=${staff} adv=${adv} sal=${sal} chq=${chq} aFY=${aFY} ctx=${ctx}/>`}
-          ${tab===1&&html`<${PgSal}   staff=${staff} adv=${adv} setAdv=${pA} sal=${sal} setSal=${pSl} chq=${chq} setChq=${pC} aFY=${aFY} ctx=${ctx}/>`}
-          ${tab===5&&html`<${PgBulk}  staff=${staff} adv=${adv} setAdv=${pA} sal=${sal} setSal=${pSl} chq=${chq} setChq=${pC} aFY=${aFY} ctx=${ctx}/>`}
-          ${tab===2&&html`<${PgAdv}   staff=${staff} adv=${adv} setAdv=${pA} chq=${chq} ctx=${ctx}/>`}
-          ${tab===3&&html`<${PgChq}   staff=${staff} chq=${chq} setChq=${pC} sal=${sal} adv=${adv} setAdv=${pA} ctx=${ctx}/>`}
-          ${tab===4&&html`<${PgSet}   staff=${staff} setStaff=${pS} adv=${adv} setAdv=${pA} sal=${sal} setSal=${pSl} chq=${chq} setChq=${pC} cats=${cats} setCats=${pCat} cfg=${cfg} setCfg=${pCfg} aFY=${aFY} ctx=${ctx}/>`}
+          ${tab===0&&html`<${PgDash}  staff=${visStaff} adv=${visAdv} sal=${visSal} chq=${visChq} aFY=${aFY} ctx=${ctx}/>`}
+          ${tab===1&&html`<${PgSal}   staff=${visStaff} adv=${visAdv} setAdv=${pA} sal=${visSal} setSal=${pSl} chq=${visChq} setChq=${pC} aFY=${aFY} ctx=${ctx}/>`}
+          ${tab===5&&html`<${PgBulk}  staff=${visStaff} adv=${visAdv} setAdv=${pA} sal=${visSal} setSal=${pSl} chq=${visChq} setChq=${pC} aFY=${aFY} ctx=${ctx}/>`}
+          ${tab===2&&html`<${PgAdv}   staff=${visStaff} adv=${visAdv} setAdv=${pA} chq=${visChq} ctx=${ctx}/>`}
+          ${tab===3&&html`<${PgChq}   staff=${visStaff} chq=${visChq} setChq=${pC} sal=${visSal} adv=${visAdv} setAdv=${pA} ctx=${ctx}/>`}
+          ${tab===4&&html`<${PgSet}   staff=${staff} setStaff=${pS} adv=${adv} setAdv=${pARaw} sal=${sal} setSal=${pSlRaw} chq=${chq} setChq=${pCRaw} cats=${cats} setCats=${pCat} cfg=${cfg} setCfg=${pCfg} aFY=${aFY} ctx=${ctx}/>`}
         </div>
       </div>
     </div>
@@ -2324,7 +2348,8 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
 function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg,setCfg,aFY,ctx}){
   const{T,catC,msg,fbSt,setFbSt,pCfg}=ctx;
   const[sec,setSec]=useState('general');
-  const blank={name:'',role:cats[0]||'Driver',mRate:'',recPay:'',client:'',phone:'',join:today(),leftDate:'',epfOvr:'',esicOvr:'',extraDed:'',inReport:true};
+  const enabledCats=cats.filter(c=>!(cfg.disabledCats||[]).includes(c));
+  const blank={name:'',role:enabledCats[0]||cats[0]||'Driver',mRate:'',recPay:'',client:'',phone:'',join:today(),leftDate:'',epfOvr:'',esicOvr:'',extraDed:'',inReport:true};
   const[showF,setShowF]=useState(false),[editId,setEditId]=useState(null),[form,setForm]=useState(blank);
   const[ledger,setLedger]=useState(null),[q,setQ]=useState(''),[qCat,setQCat]=useState('ALL');
   const[nCat,setNCat]=useState(''),[eCI,setECI]=useState(null),[eCV,setECV]=useState('');
@@ -2341,7 +2366,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
   const[updCapMode,setUpdCapMode]=useState('higher');
   const[prevBase,setPrevBase]=useState(15000);
   const[expCat,setExpCat]=useState('ALL');
-  const openAdd=()=>{setEditId(null);setForm({...blank,role:cats[0]||'Driver'});setShowF(true);};
+  const openAdd=()=>{setEditId(null);setForm({...blank,role:enabledCats[0]||cats[0]||'Driver'});setShowF(true);};
   const openEdit=s=>{setEditId(s.id);setForm({name:s.name,role:s.role,mRate:s.mRate,recPay:s.recPay||'',client:s.client||'',phone:s.phone||'',join:s.join,leftDate:s.leftDate||'',epfOvr:s.epfOvr||'',esicOvr:s.esicOvr||'',extraDed:s.extraDed||'',inReport:s.inReport!==false});setShowF(true);};
   const saveS=()=>{
     if(!form.name.trim()||!form.mRate)return msg('Fill name & salary','err');
@@ -2435,11 +2460,14 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
             const cycleChipQ=key=>{const order=['none','add','subtract'];const next=order[(order.indexOf(selQ[key]||'none')+1)%3];const nsel={...selQ,[key]:next};const ns={...cfg,catChequeCustom:{...(cfg.catChequeCustom||{}),[c]:nsel}};pCfg(ns);};
             const chips=[['epfEmp','EPF Employee'],['epfPF','EPF Employer'],['eps','EPS Employer'],['esicEmp','ESIC Employee'],['esicEr','ESIC Employer']];
             const chipStyle=st2=>st2==='add'?{bg:T.grn+'1c',bd:T.grn+'55',fg:T.grn,sym:'+'}:st2==='subtract'?{bg:T.red+'14',bd:T.red+'40',fg:T.red,sym:'−'}:{bg:T.card,bd:T.bdr,fg:T.mut,sym:'○'};
-            return html`<div key=${c+i} style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:10,padding:'9px 11px'}}>
+            const isDis=(cfg.disabledCats||[]).includes(c);
+            const toggleCatEnabled=()=>{const dc=cfg.disabledCats||[];const nd=isDis?dc.filter(x=>x!==c):[...dc,c];pCfg({...cfg,disabledCats:nd});msg(isDis?c+' enabled':c+' disabled');};
+            return html`<div key=${c+i} style=${{background:T.bg,border:`1px solid ${isDis?T.red+'40':T.bdr}`,borderRadius:10,padding:'9px 11px',opacity:isDis?0.6:1}}>
               <div style=${{display:'flex',alignItems:'center',gap:9,marginBottom:9}}>
                 <div style=${{width:9,height:9,borderRadius:'50%',background:CC[i%CC.length],flexShrink:0}}/>
-                ${eCI===i?html`<input value=${eCV} onChange=${e=>setECV(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&saveCE()} style=${{...iSt(T),flex:1,padding:'5px 9px',fontSize:13}} autoFocus=${true}/><button onClick=${saveCE} style=${{background:T.grn+'22',border:`1px solid ${T.grn}33`,borderRadius:7,padding:'4px 9px',cursor:'pointer',color:T.grn,fontSize:12,fontWeight:800,fontFamily:'inherit'}}>Save</button><button onClick=${()=>setECI(null)} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="x" s=${14} c=${T.sub}/></button>`:html`<span style=${{flex:1,fontSize:13,fontWeight:700,color:T.txt}}>${c}</span><button onClick=${()=>{setECI(i);setECV(c);}} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="ed" s=${13} c=${T.sub}/></button><button onClick=${()=>removeCat(i)} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="tr" s=${13} c=${T.red}/></button>`}
+                ${eCI===i?html`<input value=${eCV} onChange=${e=>setECV(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&saveCE()} style=${{...iSt(T),flex:1,padding:'5px 9px',fontSize:13}} autoFocus=${true}/><button onClick=${saveCE} style=${{background:T.grn+'22',border:`1px solid ${T.grn}33`,borderRadius:7,padding:'4px 9px',cursor:'pointer',color:T.grn,fontSize:12,fontWeight:800,fontFamily:'inherit'}}>Save</button><button onClick=${()=>setECI(null)} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="x" s=${14} c=${T.sub}/></button>`:html`<span style=${{flex:1,fontSize:13,fontWeight:700,color:T.txt}}>${c}${isDis&&html`<span style=${{marginLeft:7,fontSize:9,fontWeight:800,color:T.red,background:T.red+'18',borderRadius:20,padding:'2px 7px'}}>DISABLED</span>`}</span><button onClick=${toggleCatEnabled} title=${isDis?'Enable category':'Disable category'} style=${{background:isDis?T.grn+'18':T.red+'14',border:`1px solid ${isDis?T.grn+'44':T.red+'33'}`,borderRadius:7,padding:'4px 9px',cursor:'pointer',color:isDis?T.grn:T.red,fontSize:11,fontWeight:800,fontFamily:'inherit'}}>${isDis?'Enable':'Disable'}</button><button onClick=${()=>{setECI(i);setECV(c);}} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="ed" s=${13} c=${T.sub}/></button><button onClick=${()=>removeCat(i)} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="tr" s=${13} c=${T.red}/></button>`}
               </div>
+              ${isDis&&html`<div style=${{fontSize:11,color:T.red,marginBottom:9}}>This category and its staff are hidden across the app (Dashboard, Salary, Advances, Cheques, Reports). Enable to bring them back.</div>`}
               <div style=${{fontSize:9,fontWeight:800,color:T.mut,letterSpacing:.6,marginBottom:5}}>MARGIN</div>
               <div style=${{display:'flex',flexWrap:'wrap',gap:6,marginBottom:9}}>
                 ${chips.map(([key,lbl])=>{
@@ -2934,7 +2962,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
       const exC=[...new Set(staff.filter(s=>s.id!==editId&&s.client).map(s=>s.client))];const dlId='cdl'+uid();
       return html`<${Mdl} title=${editId?'Edit Staff':'Add Staff'} onClose=${()=>setShowF(false)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:13}}>
         <${Inp} T=${T} label="Full Name *" value=${form.name} onChange=${e=>setForm({...form,name:e.target.value})} placeholder="e.g. Ramesh Kumar"/>
-        <${Sel} T=${T} label="Role *" value=${form.role} onChange=${e=>setForm({...form,role:e.target.value})} options=${cats.map(c=>({value:c,label:c}))}/>
+        <${Sel} T=${T} label="Role *" value=${form.role} onChange=${e=>setForm({...form,role:e.target.value})} options=${cats.filter(c=>!(cfg.disabledCats||[]).includes(c)||c===form.role).map(c=>({value:c,label:c+((cfg.disabledCats||[]).includes(c)?' (Disabled)':'')}))}/>
         <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:12,padding:12,display:'flex',flexDirection:'column',gap:12}}>
           <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8}}>SALARY & CLIENT</div>
           <${Inp} T=${T} label="Monthly Salary (₹) *" type="number" value=${form.mRate} onChange=${e=>setForm({...form,mRate:e.target.value})} placeholder="What you pay"/>
