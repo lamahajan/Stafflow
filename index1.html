@@ -335,6 +335,7 @@ const Ico=({n,s=20,c='currentColor'})=>{
     sync:html`<svg ...${p}><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
     pct:html`<svg ...${p}><circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><line x1="5" y1="19" x2="19" y2="5"/></svg>`,
     xls:html`<svg ...${p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
+    lock:html`<svg ...${p}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
   };
   return d[n]||null;
 };
@@ -1081,6 +1082,7 @@ function App(){
   const[cats,setCats]=useState(DEF_CATS);const[cfg,setCfg]=useState({theme:'light',fys:[]});
   const[toast,setToast]=useState(null);const[ready,setReady]=useState(false);const[fbSt,setFbSt]=useState('disconnected');
   const[setUnlocked,setSetUnlocked]=useState(false);const[pinInput,setPinInput]=useState('');const[pinErr,setPinErr]=useState(false);
+  const[appUnlocked,setAppUnlocked]=useState(false);const[appPinInput,setAppPinInput]=useState('');const[appPinErr,setAppPinErr]=useState(false);
   useEffect(()=>{(async()=>{
     const[s,a,sl,c,ct,cf]=await Promise.all([ld(K.staff),ld(K.adv),ld(K.sal),ld(K.chq),ld(K.cats),ld(K.cfg)]);
     if(s)setStaff(s);if(a)setAdv(a);if(sl)setSal(sl);if(c)setChq(c);if(ct)setCats(ct);
@@ -1100,9 +1102,9 @@ function App(){
     setCfg(mc);
     if(mc.fbcfg?.apiKey){setFbSt('connecting');const r=await initFB(mc.fbcfg);
       if(r.ok){setFbSt('connected');
-        const _sets={staff:setStaff,adv:setAdv,sal:setSal,chq:setChq,cats:setCats};
-        const _def={staff:[],adv:[],sal:[],chq:[],cats:DEF_CATS};
-        ['staff','adv','sal','chq','cats'].forEach(k=>{_db.ref('sf8/'+K[k]).on('value',sn=>{const v=sn.val()!==null?sn.val():_def[k];_sets[k](v);localStorage.setItem(K[k],JSON.stringify(v));});});}
+        const _sets={staff:setStaff,adv:setAdv,sal:setSal,chq:setChq,cats:setCats,cfg:v=>setCfg({theme:'light',fys:[],...v})};
+        const _def={staff:[],adv:[],sal:[],chq:[],cats:DEF_CATS,cfg:{theme:'light',fys:[]}};
+        ['staff','adv','sal','chq','cats','cfg'].forEach(k=>{_db.ref('sf8/'+K[k]).on('value',sn=>{const v=sn.val()!==null?sn.val():_def[k];_sets[k](v);localStorage.setItem(K[k],JSON.stringify(v));});});}
       else setFbSt('error');}
     setReady(true);
   })();},[]);
@@ -1146,6 +1148,20 @@ function App(){
       ${[0,.2,.4].map((d,i)=>html`<div key=${i} style=${{width:6,height:6,background:'#0071e3',borderRadius:'50%',animation:'pulse1 1.2s ease-in-out '+d+'s infinite'}}/>`)}
     </div>
   </div>`;
+  if(cfg.appLock&&cfg.appLockPass&&!appUnlocked)return html`<div style=${{background:T.bg,minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:20,padding:16,color:T.txt}}>
+    <div style=${{display:'flex',alignItems:'center',justifyContent:'center',width:64,height:64,background:`linear-gradient(135deg,${T.acc},${T.accAlt})`,borderRadius:18}}>
+      <${Ico} n="lock" s=${30} c="#fff"/>
+    </div>
+    <div style=${{textAlign:'center'}}>
+      <div style=${{fontSize:20,fontWeight:900,color:T.txt}}>StaffFlow Locked</div>
+      <div style=${{fontSize:12,color:T.sub,marginTop:4}}>Enter password to open the app</div>
+    </div>
+    <div style=${{width:'100%',maxWidth:280,display:'flex',flexDirection:'column',gap:9}}>
+      <input type="password" value=${appPinInput} autoFocus=${true} onChange=${e=>{setAppPinInput(e.target.value);setAppPinErr(false);}} onKeyDown=${e=>{if(e.key==='Enter'){if(simpleHash(appPinInput)===cfg.appLockPass){setAppUnlocked(true);setAppPinInput('');setAppPinErr(false);}else{setAppPinErr(true);}}}} placeholder="Password" style=${{...iSt(T),textAlign:'center',fontSize:15,letterSpacing:2,...(appPinErr?{border:`1px solid ${T.red}`}:{})}}/>
+      ${appPinErr&&html`<div style=${{fontSize:11,color:T.red,textAlign:'center',fontWeight:700}}>Incorrect password</div>`}
+      <${Btn} T=${T} ch="Unlock" onClick=${()=>{if(simpleHash(appPinInput)===cfg.appLockPass){setAppUnlocked(true);setAppPinInput('');setAppPinErr(false);}else{setAppPinErr(true);}}}/>
+    </div>
+  </div>`;
   return html`<div style=${{background:T.bg,minHeight:'100vh',color:T.txt}}>
     <style>${`select option{background:${T.card}} input::placeholder{color:${T.mut}}`}</style>
 
@@ -1161,7 +1177,7 @@ function App(){
       </div>
       <!-- Nav Items -->
       <div style=${{display:'flex',flexDirection:'column',gap:3,flex:1}}>
-        ${NAV.map(item=>{const active=tab===item.t;const badge=item.t===2?adv.filter(a=>a.status==='pending').length:item.t===3?chq.filter(c=>c.status==='pending').length:0;return html`<button key=${item.n} onClick=${()=>setTab(item.t)} style=${{display:'flex',alignItems:'center',gap:11,padding:'10px 13px',borderRadius:12,background:active?T.accS:'transparent',border:active?`1px solid ${T.accB}`:'1px solid transparent',color:active?T.acc:T.sub,cursor:'pointer',fontFamily:'inherit',fontSize:14,fontWeight:active?800:600,width:'100%',textAlign:'left',position:'relative',transition:'all .15s'}}>
+        ${NAV.map(item=>{const active=tab===item.t;const badge=item.t===2?adv.filter(a=>a.status==='pending').length:item.t===3?chq.filter(c=>c.status==='pending').length:0;return html`<button key=${item.n} onClick=${()=>{if(item.t!==4)setSetUnlocked(false);setTab(item.t);}} style=${{display:'flex',alignItems:'center',gap:11,padding:'10px 13px',borderRadius:12,background:active?T.accS:'transparent',border:active?`1px solid ${T.accB}`:'1px solid transparent',color:active?T.acc:T.sub,cursor:'pointer',fontFamily:'inherit',fontSize:14,fontWeight:active?800:600,width:'100%',textAlign:'left',position:'relative',transition:'all .15s'}}>
           <${Ico} n=${item.n} s=${18} c=${active?T.acc:T.sub}/>
           <span>${item.l}</span>
           ${badge>0&&html`<span style=${{marginLeft:'auto',background:T.red,color:'#fff',borderRadius:20,padding:'1px 7px',fontSize:10,fontWeight:900}}>${badge}</span>`}
@@ -1201,14 +1217,25 @@ function App(){
           ${tab===5&&html`<${PgBulk}  staff=${visStaff} adv=${visAdv} setAdv=${pA} sal=${visSal} setSal=${pSl} chq=${visChq} setChq=${pC} aFY=${aFY} ctx=${ctx}/>`}
           ${tab===2&&html`<${PgAdv}   staff=${visStaff} adv=${visAdv} setAdv=${pA} chq=${visChq} ctx=${ctx}/>`}
           ${tab===3&&html`<${PgChq}   staff=${visStaff} chq=${visChq} setChq=${pC} sal=${visSal} adv=${visAdv} setAdv=${pA} ctx=${ctx}/>`}
-          ${tab===4&&html`<${PgSet}   staff=${staff} setStaff=${pS} adv=${adv} setAdv=${pARaw} sal=${sal} setSal=${pSlRaw} chq=${chq} setChq=${pCRaw} cats=${cats} setCats=${pCat} cfg=${cfg} setCfg=${pCfg} aFY=${aFY} ctx=${ctx}/>`}
+          ${tab===4&&(cfg.settingsPass&&!setUnlocked?html`<div style=${{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:'60vh',gap:16,padding:16}}>
+            <div style=${{display:'flex',alignItems:'center',justifyContent:'center',width:56,height:56,background:T.accS,border:`1px solid ${T.accB}`,borderRadius:16}}><${Ico} n="lock" s=${26} c=${T.acc}/></div>
+            <div style=${{textAlign:'center'}}>
+              <div style=${{fontSize:16,fontWeight:900,color:T.txt}}>Settings Locked</div>
+              <div style=${{fontSize:12,color:T.sub,marginTop:3}}>Enter password to continue</div>
+            </div>
+            <div style=${{width:'100%',maxWidth:280,display:'flex',flexDirection:'column',gap:9}}>
+              <input type="password" value=${pinInput} autoFocus=${true} onChange=${e=>{setPinInput(e.target.value);setPinErr(false);}} onKeyDown=${e=>{if(e.key==='Enter'){if(simpleHash(pinInput)===cfg.settingsPass){setSetUnlocked(true);setPinInput('');setPinErr(false);}else{setPinErr(true);}}}} placeholder="Password" style=${{...iSt(T),textAlign:'center',fontSize:15,letterSpacing:2,...(pinErr?{border:`1px solid ${T.red}`}:{})}}/>
+              ${pinErr&&html`<div style=${{fontSize:11,color:T.red,textAlign:'center',fontWeight:700}}>Incorrect password</div>`}
+              <${Btn} T=${T} ch="Unlock" onClick=${()=>{if(simpleHash(pinInput)===cfg.settingsPass){setSetUnlocked(true);setPinInput('');setPinErr(false);}else{setPinErr(true);}}}/>
+            </div>
+          </div>`:html`<${PgSet}   staff=${staff} setStaff=${pS} adv=${adv} setAdv=${pARaw} sal=${sal} setSal=${pSlRaw} chq=${chq} setChq=${pCRaw} cats=${cats} setCats=${pCat} cfg=${cfg} setCfg=${pCfg} aFY=${aFY} ctx=${ctx}/>`)}
         </div>
       </div>
     </div>
 
     <!-- ── MOBILE BOTTOM NAV ── -->
     <div class="sf-bottom-nav" style=${{position:'fixed',bottom:0,left:0,right:0,background:T.surf,borderTop:`1px solid ${T.bdr}`,padding:'6px 0 14px',zIndex:57,backdropFilter:'saturate(180%) blur(20px)',WebkitBackdropFilter:'saturate(180%) blur(20px)'}}>
-      ${NAV.map(item=>{const active=tab===item.t;const badge=item.t===2?adv.filter(a=>a.status==='pending').length:item.t===3?chq.filter(c=>c.status==='pending').length:0;return html`<button key=${item.n} onClick=${()=>setTab(item.t)} style=${{flex:1,background:'none',border:'none',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:3,color:active?T.acc:T.sub,padding:'4px 0',position:'relative'}}>
+      ${NAV.map(item=>{const active=tab===item.t;const badge=item.t===2?adv.filter(a=>a.status==='pending').length:item.t===3?chq.filter(c=>c.status==='pending').length:0;return html`<button key=${item.n} onClick=${()=>{if(item.t!==4)setSetUnlocked(false);setTab(item.t);}} style=${{flex:1,background:'none',border:'none',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:3,color:active?T.acc:T.sub,padding:'4px 0',position:'relative'}}>
         ${badge>0&&html`<div style=${{position:'absolute',top:2,right:'18%',width:15,height:15,background:T.red,borderRadius:'50%',fontSize:9,fontWeight:900,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center'}}>${badge>9?'9+':badge}</div>`}
         <div style=${{background:active?T.accS:'transparent',borderRadius:9,padding:'5px 8px'}}><${Ico} n=${item.n} s=${19} c=${active?T.acc:T.sub}/></div>
         <span style=${{fontSize:9,fontWeight:active?800:600}}>${item.l}</span>
@@ -2366,6 +2393,8 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
   const[updCapMode,setUpdCapMode]=useState('higher');
   const[prevBase,setPrevBase]=useState(15000);
   const[expCat,setExpCat]=useState('ALL');
+  const[newPass,setNewPass]=useState('');
+  const[newAppPass,setNewAppPass]=useState('');
   const openAdd=()=>{setEditId(null);setForm({...blank,role:enabledCats[0]||cats[0]||'Driver'});setShowF(true);};
   const openEdit=s=>{setEditId(s.id);setForm({name:s.name,role:s.role,mRate:s.mRate,recPay:s.recPay||'',client:s.client||'',phone:s.phone||'',join:s.join,leftDate:s.leftDate||'',epfOvr:s.epfOvr||'',esicOvr:s.esicOvr||'',extraDed:s.extraDed||'',inReport:s.inReport!==false});setShowF(true);};
   const saveS=()=>{
@@ -2448,6 +2477,44 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
             ${active&&html`<span style=${{fontSize:9,background:T.acc+'22',color:T.acc,borderRadius:20,padding:'1px 6px',fontWeight:800}}>ACTIVE</span>`}
           </button>`;})}
         </div>
+      </div>
+      <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
+        <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:4}}>SETTINGS PASSWORD</div>
+        <div style=${{fontSize:11,color:T.sub,marginBottom:10}}>${cfg.settingsPass?'A password is required to open Settings.':'Set a password so only you can open Settings.'}</div>
+        ${cfg.settingsPass?html`<div style=${{display:'flex',flexDirection:'column',gap:8}}>
+          <div style=${{display:'flex',alignItems:'center',gap:8,background:T.grn+'14',border:`1px solid ${T.grn}33`,borderRadius:10,padding:'8px 11px'}}><${Ico} n="lock" s=${14} c=${T.grn}/><span style=${{fontSize:12,fontWeight:800,color:T.grn}}>Settings password is ON</span></div>
+          <input type="password" value=${newPass} onChange=${e=>setNewPass(e.target.value)} placeholder="New password (to change it)" style=${{...iSt(T),fontSize:13}}/>
+          <div style=${{display:'flex',gap:8}}>
+            <${Btn} T=${T} sm ch="Change" onClick=${()=>{if(!newPass.trim())return msg('Enter a new password','err');pCfg({...cfg,settingsPass:simpleHash(newPass.trim())});setNewPass('');msg('Password changed');}} style=${{flex:1}}/>
+            <button onClick=${()=>{if(!confirm('Remove Settings password?'))return;const{settingsPass,...rest}=cfg;pCfg(rest);msg('Password removed');}} style=${{flex:1,background:T.red+'14',border:`1px solid ${T.red}33`,borderRadius:12,padding:'10px 8px',cursor:'pointer',color:T.red,fontSize:12,fontWeight:800,fontFamily:'inherit'}}>Remove</button>
+          </div>
+        </div>`:html`<div style=${{display:'flex',gap:8}}>
+          <input type="password" value=${newPass} onChange=${e=>setNewPass(e.target.value)} placeholder="Set a password" style=${{...iSt(T),fontSize:13,flex:1}}/>
+          <${Btn} T=${T} ch="Set" onClick=${()=>{if(!newPass.trim())return msg('Enter a password','err');pCfg({...cfg,settingsPass:simpleHash(newPass.trim())});setNewPass('');msg('Settings password set');}}/>
+        </div>`}
+      </div>
+      <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
+        <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
+          <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8}}>APP LOCK (WHOLE APP)</div>
+          <button onClick=${()=>{
+            if(cfg.appLock){pCfg({...cfg,appLock:false});msg('App Lock disabled');return;}
+            const pass=cfg.appLockPass?null:newAppPass.trim();
+            if(!cfg.appLockPass&&!pass)return msg('Set a password below first','err');
+            pCfg(pass?{...cfg,appLock:true,appLockPass:simpleHash(pass)}:{...cfg,appLock:true});
+            setNewAppPass('');msg('App Lock enabled');
+          }} style=${{background:cfg.appLock?T.grn+'18':T.card,border:`1px solid ${cfg.appLock?T.grn+'55':T.bdr}`,borderRadius:20,padding:'5px 12px',cursor:'pointer',color:cfg.appLock?T.grn:T.sub,fontSize:11,fontWeight:800,fontFamily:'inherit'}}>${cfg.appLock?'Enabled':'Disabled'}</button>
+        </div>
+        <div style=${{fontSize:11,color:T.sub,marginBottom:10}}>Require a password to open the entire app, every time it loads — not just Settings.</div>
+        ${cfg.appLockPass?html`<div style=${{display:'flex',flexDirection:'column',gap:8}}>
+          <div style=${{display:'flex',alignItems:'center',gap:8,background:(cfg.appLock?T.grn:T.mut)+'14',border:`1px solid ${(cfg.appLock?T.grn:T.mut)}33`,borderRadius:10,padding:'8px 11px'}}><${Ico} n="lock" s=${14} c=${cfg.appLock?T.grn:T.mut}/><span style=${{fontSize:12,fontWeight:800,color:cfg.appLock?T.grn:T.mut}}>App Lock is ${cfg.appLock?'ON':'OFF (password saved)'}</span></div>
+          <input type="password" value=${newAppPass} onChange=${e=>setNewAppPass(e.target.value)} placeholder="New password (to change it)" style=${{...iSt(T),fontSize:13}}/>
+          <div style=${{display:'flex',gap:8}}>
+            <${Btn} T=${T} sm ch="Change" onClick=${()=>{if(!newAppPass.trim())return msg('Enter a new password','err');pCfg({...cfg,appLockPass:simpleHash(newAppPass.trim())});setNewAppPass('');msg('App Lock password changed');}} style=${{flex:1}}/>
+            <button onClick=${()=>{if(!confirm('Remove App Lock password? This also turns App Lock off.'))return;const{appLockPass,...rest}=cfg;pCfg({...rest,appLock:false});msg('App Lock password removed');}} style=${{flex:1,background:T.red+'14',border:`1px solid ${T.red}33`,borderRadius:12,padding:'10px 8px',cursor:'pointer',color:T.red,fontSize:12,fontWeight:800,fontFamily:'inherit'}}>Remove</button>
+          </div>
+        </div>`:html`<div style=${{display:'flex',gap:8}}>
+          <input type="password" value=${newAppPass} onChange=${e=>setNewAppPass(e.target.value)} placeholder="Set a password, then tap Enabled above" style=${{...iSt(T),fontSize:13,flex:1}}/>
+        </div>`}
       </div>
       <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
         <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:4}}>STAFF CATEGORIES</div>
