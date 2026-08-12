@@ -311,7 +311,7 @@ const getDeviceId=()=>{let id=localStorage.getItem('sf8_device_id');if(!id){id=u
 // Employee IDs are alphanumeric (LIS0001, LT0001, LD0001…) built off an ever-increasing per-prefix
 // counter (see nextEmpIdFor below) — never off staff.length or array position — so a deleted staff's
 // ID is never reused.
-const empIdStr=(n,prefix='LIS')=>prefix+String(n).padStart(4,'0');
+const empIdStr=(n,prefix='LIS')=>prefix+String(n).padStart(3,'0');
 const TH={
   dark:{bg:'#0D0F14',surf:'#13161D',card:'#181B24',bdr:'#1E2130',bdr2:'#2A2E42',txt:'#F1F2F6',sub:'#9DA3B4',mut:'#4B5270',acc:'#0071e3',accAlt:'#0064cc',accS:'rgba(0,113,227,.13)',accB:'rgba(0,113,227,.3)',grn:'#10B981',red:'#EF4444',blu:'#3B82F6',yel:'#F59E0B',pur:'#A855F7',inBg:'#1A1D26'},
   light:{bg:'#f2f2f7',surf:'rgba(255,255,255,0.85)',card:'#ffffff',bdr:'rgba(0,0,0,0.08)',bdr2:'rgba(0,0,0,0.05)',txt:'#1d1d1f',sub:'#6e6e73',mut:'#86868b',acc:'#0071e3',accAlt:'#0064cc',accS:'rgba(0,113,227,0.08)',accB:'rgba(0,113,227,0.3)',grn:'#34c759',red:'#ff3b30',blu:'#0071e3',yel:'#ff9f0a',pur:'#8B5CF6',inBg:'#ffffff'},
@@ -1773,7 +1773,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
       </div>
     </div>
     <div style=${{marginBottom:13,display:'flex',gap:8,alignItems:'center'}}><select value=${selIdx} onChange=${e=>setSelIdx(Number(e.target.value))} style=${{...iSt(T),appearance:'none',cursor:'pointer',flex:1}}>${fyM.map((m,i)=>html`<option key=${i} value=${i}>${m.label}</option>`)}</select><button onClick=${()=>setShowMonthPicker(true)} style=${{background:T.acc+'18',border:`1px solid ${T.accB}`,borderRadius:10,padding:'10px 12px',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',gap:5,fontFamily:'inherit',fontSize:12,fontWeight:800,color:T.acc}}><${Ico} n="cal" s=${14} c=${T.acc}/></button></div>
-    <div style=${{display:'flex',gap:6,marginBottom:13,overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:2}}>
+    <div style=${{display:'flex',flexWrap:'wrap',gap:6,marginBottom:13,maxHeight:66,overflowY:'auto'}}>
       ${[{k:'ALL',l:'All'},...cats.filter(c=>[...undone,...monSal].some(s=>(s.role||s.role)===c)).map(c=>({k:c,l:c}))].map(({k,l})=>{
         const cnt=k==='ALL'?undone.length+monSal.length:undone.filter(s=>s.role===k).length+monSal.filter(s=>s.role===k).length;
         const ac=selCat===k;
@@ -2620,7 +2620,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
     </div>`}
     ${sec==='staff'&&html`<div>
       <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><div style=${{fontSize:14,fontWeight:800,color:T.txt}}>${fl.length} Members${qCat!=='ALL'?' · '+qCat:''}</div><${Btn} T=${T} sm ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="plus" s=${14} c="#fff"/>Add</span>`} onClick=${openAdd}/></div>
-      <div style=${{display:'flex',gap:6,marginBottom:12,overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:2}}>
+      <div style=${{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12,maxHeight:66,overflowY:'auto'}}>
         ${[{k:'ALL',l:'All'},...cats.map(c=>({k:c,l:c}))].map(({k,l})=>{
           const cnt=k==='ALL'?staff.length:staff.filter(s=>s.role===k).length;
           const ac=qCat===k;
@@ -2681,7 +2681,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
       const epsWageCeil=st.epsWageCeil??15000;
       const esicEmp=st.esicEmp??0.75, esicEr=st.esicEr??3.25;
       const esicWageLim=st.esicWageLim??21000;
-      const save=(key,val)=>{const ns={...cfg,statutory:{...st,[key]:Number(val)}};setCfg(ns);};
+      const save=(key,val)=>{pCfg({...cfg,statutory:{...st,[key]:Number(val)}});};
       const inpSt={background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:9,padding:'9px 32px 9px 11px',color:T.txt,fontSize:14,fontWeight:800,width:'100%',fontFamily:"'Inter'"};
       const inpStNoR={...inpSt,padding:'9px 11px'};
       return html`<div style=${{display:'flex',flexDirection:'column',gap:14}}>
@@ -2748,7 +2748,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
               <div style=${{fontSize:11,fontWeight:800,color:T.blu,letterSpacing:.8,marginBottom:3}}>ROUND OFF CHEQUE AMOUNT</div>
               <div style=${{fontSize:11,color:T.sub}}>Rounds Cheque Amount to nearest ₹5 (e.g. ₹14,079 → ₹14,080)</div>
             </div>
-            <button onClick=${()=>{const ns={...cfg,statutory:{...st,roundOff10:!st.roundOff10}};setCfg(ns);}} style=${{flexShrink:0,width:44,height:26,borderRadius:20,border:'none',cursor:'pointer',background:st.roundOff10?T.grn:T.bdr2,position:'relative',transition:'background .15s'}}>
+            <button onClick=${()=>{pCfg({...cfg,statutory:{...st,roundOff10:!st.roundOff10}});}} style=${{flexShrink:0,width:44,height:26,borderRadius:20,border:'none',cursor:'pointer',background:st.roundOff10?T.grn:T.bdr2,position:'relative',transition:'background .15s'}}>
               <span style=${{position:'absolute',top:3,left:st.roundOff10?21:3,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left .15s'}}/>
             </button>
           </div>
