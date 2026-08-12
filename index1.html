@@ -504,7 +504,7 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
     addImage:(data,ifmt,x,y,w,h)=>realDoc.addImage(data,ifmt,sx(x),sy(y),w*SCALE,h*SCALE),
   };
   const st=cfg.statutory||{};
-  const agencyName=cfg.agencyName||'StaffFlow Agency';
+  const agencyName='Lotus International School';
   const fmt=n=>fRp(n);
   const isBW=cfg&&cfg.reportColor===false;
   const toTitle=s=>{
@@ -1090,13 +1090,19 @@ function App(){
   const[cats,setCats]=useState(DEF_CATS);const[cfg,setCfg]=useState({theme:'light',fys:[]});
   const[toast,setToast]=useState(null);const[ready,setReady]=useState(false);const[fbSt,setFbSt]=useState('disconnected');
   const[setUnlocked,setSetUnlocked]=useState(false);const[pinInput,setPinInput]=useState('');const[pinErr,setPinErr]=useState(false);
-  const[appUnlocked,setAppUnlocked]=useState(false);const[appPinInput,setAppPinInput]=useState('');const[appPinErr,setAppPinErr]=useState(false);
   const[myDeviceId]=useState(getDeviceId);
   const[myPerms,setMyPerms]=useState(null); // null = not yet loaded / no Firebase → treat as all-enabled
   const[allDevices,setAllDevices]=useState({});
   useEffect(()=>{(async()=>{
+    // Every staff member is at the same client — this was previously an editable per-staff field, now fixed.
+    // Silently normalizes old data (from local storage or Firebase, on any device) without needing an edit.
+    const fixClients=arr=>{
+      if(!arr||!arr.some(x=>x.client!=='Lotus International School'))return null;
+      return arr.map(x=>({...x,client:'Lotus International School'}));
+    };
     const[s,a,sl,c,ct,cf]=await Promise.all([ld(K.staff),ld(K.adv),ld(K.sal),ld(K.chq),ld(K.cats),ld(K.cfg)]);
-    if(s)setStaff(s);if(a)setAdv(a);if(sl)setSal(sl);if(c)setChq(c);if(ct)setCats(ct);
+    if(s){const fx=fixClients(s);if(fx){setStaff(fx);sv(K.staff,fx);}else setStaff(s);}
+    if(a)setAdv(a);if(sl)setSal(sl);if(c)setChq(c);if(ct)setCats(ct);
     const mc={theme:'light',fys:[],...(cf||{})};
     // ── Auto-detect FYs from existing salary records ──
     if(sl&&sl.length){
@@ -1113,7 +1119,7 @@ function App(){
     setCfg(mc);
     if(mc.fbcfg?.apiKey){setFbSt('connecting');const r=await initFB(mc.fbcfg);
       if(r.ok){setFbSt('connected');
-        const _sets={staff:setStaff,adv:setAdv,sal:setSal,chq:setChq,cats:setCats,cfg:v=>setCfg({theme:'light',fys:[],...v})};
+        const _sets={staff:v=>{const fx=fixClients(v);if(fx){setStaff(fx);sv(K.staff,fx);}else setStaff(v);},adv:setAdv,sal:setSal,chq:setChq,cats:setCats,cfg:v=>setCfg({theme:'light',fys:[],...v})};
         const _def={staff:[],adv:[],sal:[],chq:[],cats:DEF_CATS,cfg:{theme:'light',fys:[]}};
         ['staff','adv','sal','chq','cats','cfg'].forEach(k=>{_db.ref('sf8/'+K[k]).on('value',sn=>{const v=sn.val()!==null?sn.val():_def[k];_sets[k](v);localStorage.setItem(K[k],JSON.stringify(v));});});
         // ── Register this device & subscribe to its own permissions + the full device list ──
@@ -1179,20 +1185,6 @@ function App(){
     </div>
     <div style=${{display:'flex',gap:6,marginTop:4}}>
       ${[0,.2,.4].map((d,i)=>html`<div key=${i} style=${{width:6,height:6,background:'#0071e3',borderRadius:'50%',animation:'pulse1 1.2s ease-in-out '+d+'s infinite'}}/>`)}
-    </div>
-  </div>`;
-  if(cfg.appLock&&cfg.appLockPass&&!appUnlocked)return html`<div style=${{background:T.bg,minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:20,padding:16,color:T.txt}}>
-    <div style=${{display:'flex',alignItems:'center',justifyContent:'center',width:64,height:64,background:`linear-gradient(135deg,${T.acc},${T.accAlt})`,borderRadius:18}}>
-      <${Ico} n="lock" s=${30} c="#fff"/>
-    </div>
-    <div style=${{textAlign:'center'}}>
-      <div style=${{fontSize:20,fontWeight:900,color:T.txt}}>StaffFlow Locked</div>
-      <div style=${{fontSize:12,color:T.sub,marginTop:4}}>Enter password to open the app</div>
-    </div>
-    <div style=${{width:'100%',maxWidth:280,display:'flex',flexDirection:'column',gap:9}}>
-      <input type="password" value=${appPinInput} autoFocus=${true} onChange=${e=>{setAppPinInput(e.target.value);setAppPinErr(false);}} onKeyDown=${e=>{if(e.key==='Enter'){if(simpleHash(appPinInput)===cfg.appLockPass){setAppUnlocked(true);setAppPinInput('');setAppPinErr(false);}else{setAppPinErr(true);}}}} placeholder="Password" style=${{...iSt(T),textAlign:'center',fontSize:15,letterSpacing:2,...(appPinErr?{border:`1px solid ${T.red}`}:{})}}/>
-      ${appPinErr&&html`<div style=${{fontSize:11,color:T.red,textAlign:'center',fontWeight:700}}>Incorrect password</div>`}
-      <${Btn} T=${T} ch="Unlock" onClick=${()=>{if(simpleHash(appPinInput)===cfg.appLockPass){setAppUnlocked(true);setAppPinInput('');setAppPinErr(false);}else{setAppPinErr(true);}}}/>
     </div>
   </div>`;
   return html`<div style=${{background:T.bg,minHeight:'100vh',color:T.txt}}>
@@ -2409,7 +2401,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
   const{T,catC,msg,fbSt,setFbSt,pCfg,myDeviceId,allDevices,setDevicePage,renameDevice,removeDevice}=ctx;
   const[sec,setSec]=useState('general');
   const enabledCats=cats.filter(c=>!(cfg.disabledCats||[]).includes(c));
-  const blank={name:'',role:enabledCats[0]||cats[0]||'Driver',mRate:'',recPay:'',client:'',phone:'',join:today(),leftDate:'',epfOvr:'',esicOvr:'',extraDed:'',inReport:true};
+  const blank={name:'',role:enabledCats[0]||cats[0]||'Driver',mRate:'',recPay:'',phone:'',join:today(),leftDate:'',epfOvr:'',esicOvr:'',extraDed:'',inReport:true};
   const[showF,setShowF]=useState(false),[editId,setEditId]=useState(null),[form,setForm]=useState(blank);
   const[ledger,setLedger]=useState(null),[q,setQ]=useState(''),[qCat,setQCat]=useState('ALL');
   const[nCat,setNCat]=useState(''),[eCI,setECI]=useState(null),[eCV,setECV]=useState('');
@@ -2427,12 +2419,11 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
   const[prevBase,setPrevBase]=useState(15000);
   const[expCat,setExpCat]=useState('ALL');
   const[newPass,setNewPass]=useState('');
-  const[newAppPass,setNewAppPass]=useState('');
   const openAdd=()=>{setEditId(null);setForm({...blank,role:enabledCats[0]||cats[0]||'Driver'});setShowF(true);};
-  const openEdit=s=>{setEditId(s.id);setForm({name:s.name,role:s.role,mRate:s.mRate,recPay:s.recPay||'',client:s.client||'',phone:s.phone||'',join:s.join,leftDate:s.leftDate||'',epfOvr:s.epfOvr||'',esicOvr:s.esicOvr||'',extraDed:s.extraDed||'',inReport:s.inReport!==false});setShowF(true);};
+  const openEdit=s=>{setEditId(s.id);setForm({name:s.name,role:s.role,mRate:s.mRate,recPay:s.recPay||'',phone:s.phone||'',join:s.join,leftDate:s.leftDate||'',epfOvr:s.epfOvr||'',esicOvr:s.esicOvr||'',extraDed:s.extraDed||'',inReport:s.inReport!==false});setShowF(true);};
   const saveS=()=>{
     if(!form.name.trim()||!form.mRate)return msg('Fill name & salary','err');
-    const staffObj={...form};
+    const staffObj={...form,client:'Lotus International School'};
     if(editId)setStaff(staff.map(s=>s.id===editId?{...s,...staffObj}:s));
     else setStaff([...staff,{id:uid(),...staffObj}]);
     msg(editId?'Updated':'Added');setShowF(false);
@@ -2471,7 +2462,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
     {g:'General',items:[{k:'general',l:'General',n:'sun'}]},
     {g:'Staff',items:[{k:'staff',l:'Staff',n:'ppl'}]},
     {g:'',items:[{k:'statutory',l:'EPF/ESIC',n:'pct'},{k:'salupd',l:'Salary Update & FY',n:'dlr'}]},
-    {g:'Data',items:[{k:'data',l:'Backup & Sync',n:'dn'},{k:'devices',l:'Devices',n:'lock'}]},
+    {g:'',items:[{k:'data',l:'Backup & Sync',n:'dn'},{k:'devices',l:'Devices',n:'lock'}]},
     {g:'Danger Zone',items:[{k:'danger',l:'Delete Data',n:'tr'}]},
   ];
   return html`<div style=${{padding:16}}>
@@ -2487,28 +2478,26 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
     </div>
     ${sec==='general'&&html`<div style=${{display:'flex',flexDirection:'column',gap:14}}>
       <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
-        <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:8}}>AGENCY NAME (appears on salary slips)</div>
-        <input value=${cfg.agencyName||''} onChange=${e=>pCfg({...cfg,agencyName:e.target.value})} placeholder="e.g. Sunshine Security Agency" style=${{...iSt(T),fontSize:13,fontWeight:700}}/>
-      </div>
-      <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
-        <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:10}}>APPEARANCE</div>
-        <div style=${{display:'flex',gap:8}}>
-          ${['dark','light'].map(th=>html`<button key=${th} onClick=${()=>setCfg({...cfg,theme:th})} style=${{flex:1,background:cfg.theme===th?T.accS:T.bg,border:`1px solid ${cfg.theme===th?T.accB:T.bdr}`,borderRadius:11,padding:'9px 8px',cursor:'pointer',display:'flex',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
-            <${Ico} n=${th==='dark'?'moon':'sun'} s=${15} c=${cfg.theme===th?T.acc:T.sub}/>
-            <span style=${{fontSize:12,fontWeight:800,color:cfg.theme===th?T.acc:T.sub,textTransform:'capitalize'}}>${th} Mode</span>
-            ${cfg.theme===th&&html`<span style=${{fontSize:9,background:T.acc+'22',color:T.acc,borderRadius:20,padding:'1px 6px',fontWeight:800}}>ACTIVE</span>`}
-          </button>`)}
-        </div>
-      </div>
-      <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
-        <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:10}}>REPORTS &amp; PDFs</div>
-        <div style=${{fontSize:11,color:T.sub,marginBottom:10}}>Choose whether downloaded PDFs (salary slips, reports, ledgers) print in color or black &amp; white.</div>
-        <div style=${{display:'flex',gap:8}}>
-          ${[['color','Coloured'],['bw','Black & White']].map(([val,lbl])=>{const active=(cfg.reportColor!==false)===(val==='color');return html`<button key=${val} onClick=${()=>pCfg({...cfg,reportColor:val==='color'})} style=${{flex:1,background:active?T.accS:T.bg,border:`1px solid ${active?T.accB:T.bdr}`,borderRadius:11,padding:'9px 8px',cursor:'pointer',display:'flex',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
-            <${Ico} n="pdf" s=${15} c=${active?T.acc:T.sub}/>
-            <span style=${{fontSize:12,fontWeight:800,color:active?T.acc:T.sub}}>${lbl}</span>
-            ${active&&html`<span style=${{fontSize:9,background:T.acc+'22',color:T.acc,borderRadius:20,padding:'1px 6px',fontWeight:800}}>ACTIVE</span>`}
-          </button>`;})}
+        <div style=${{display:'flex',gap:16,flexWrap:'wrap'}}>
+          <div style=${{flex:1,minWidth:200}}>
+            <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:10}}>APPEARANCE</div>
+            <div style=${{display:'flex',gap:8}}>
+              ${['dark','light'].map(th=>html`<button key=${th} onClick=${()=>setCfg({...cfg,theme:th})} style=${{flex:1,background:cfg.theme===th?T.accS:T.bg,border:`1px solid ${cfg.theme===th?T.accB:T.bdr}`,borderRadius:11,padding:'9px 8px',cursor:'pointer',display:'flex',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
+                <${Ico} n=${th==='dark'?'moon':'sun'} s=${15} c=${cfg.theme===th?T.acc:T.sub}/>
+                <span style=${{fontSize:12,fontWeight:800,color:cfg.theme===th?T.acc:T.sub,textTransform:'capitalize'}}>${th}</span>
+              </button>`)}
+            </div>
+          </div>
+          <div style=${{width:1,background:T.bdr,alignSelf:'stretch'}}/>
+          <div style=${{flex:1,minWidth:200}}>
+            <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:10}}>REPORTS &amp; PDFs</div>
+            <div style=${{display:'flex',gap:8}}>
+              ${[['color','Coloured'],['bw','Black & White']].map(([val,lbl])=>{const active=(cfg.reportColor!==false)===(val==='color');return html`<button key=${val} onClick=${()=>pCfg({...cfg,reportColor:val==='color'})} style=${{flex:1,background:active?T.accS:T.bg,border:`1px solid ${active?T.accB:T.bdr}`,borderRadius:11,padding:'9px 8px',cursor:'pointer',display:'flex',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
+                <${Ico} n="pdf" s=${15} c=${active?T.acc:T.sub}/>
+                <span style=${{fontSize:12,fontWeight:800,color:active?T.acc:T.sub}}>${lbl}</span>
+              </button>`;})}
+            </div>
+          </div>
         </div>
       </div>
       <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
@@ -2524,29 +2513,6 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
         </div>`:html`<div style=${{display:'flex',gap:8}}>
           <input type="password" value=${newPass} onChange=${e=>setNewPass(e.target.value)} placeholder="Set a password" style=${{...iSt(T),fontSize:13,flex:1}}/>
           <${Btn} T=${T} ch="Set" onClick=${()=>{if(!newPass.trim())return msg('Enter a password','err');pCfg({...cfg,settingsPass:simpleHash(newPass.trim())});setNewPass('');msg('Settings password set');}}/>
-        </div>`}
-      </div>
-      <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
-        <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
-          <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8}}>APP LOCK (WHOLE APP)</div>
-          <button onClick=${()=>{
-            if(cfg.appLock){pCfg({...cfg,appLock:false});msg('App Lock disabled');return;}
-            const pass=cfg.appLockPass?null:newAppPass.trim();
-            if(!cfg.appLockPass&&!pass)return msg('Set a password below first','err');
-            pCfg(pass?{...cfg,appLock:true,appLockPass:simpleHash(pass)}:{...cfg,appLock:true});
-            setNewAppPass('');msg('App Lock enabled');
-          }} style=${{background:cfg.appLock?T.grn+'18':T.card,border:`1px solid ${cfg.appLock?T.grn+'55':T.bdr}`,borderRadius:20,padding:'5px 12px',cursor:'pointer',color:cfg.appLock?T.grn:T.sub,fontSize:11,fontWeight:800,fontFamily:'inherit'}}>${cfg.appLock?'Enabled':'Disabled'}</button>
-        </div>
-        <div style=${{fontSize:11,color:T.sub,marginBottom:10}}>Require a password to open the entire app, every time it loads — not just Settings.</div>
-        ${cfg.appLockPass?html`<div style=${{display:'flex',flexDirection:'column',gap:8}}>
-          <div style=${{display:'flex',alignItems:'center',gap:8,background:(cfg.appLock?T.grn:T.mut)+'14',border:`1px solid ${(cfg.appLock?T.grn:T.mut)}33`,borderRadius:10,padding:'8px 11px'}}><${Ico} n="lock" s=${14} c=${cfg.appLock?T.grn:T.mut}/><span style=${{fontSize:12,fontWeight:800,color:cfg.appLock?T.grn:T.mut}}>App Lock is ${cfg.appLock?'ON':'OFF (password saved)'}</span></div>
-          <input type="password" value=${newAppPass} onChange=${e=>setNewAppPass(e.target.value)} placeholder="New password (to change it)" style=${{...iSt(T),fontSize:13}}/>
-          <div style=${{display:'flex',gap:8}}>
-            <${Btn} T=${T} sm ch="Change" onClick=${()=>{if(!newAppPass.trim())return msg('Enter a new password','err');pCfg({...cfg,appLockPass:simpleHash(newAppPass.trim())});setNewAppPass('');msg('App Lock password changed');}} style=${{flex:1}}/>
-            <button onClick=${()=>{if(!confirm('Remove App Lock password? This also turns App Lock off.'))return;const{appLockPass,...rest}=cfg;pCfg({...rest,appLock:false});msg('App Lock password removed');}} style=${{flex:1,background:T.red+'14',border:`1px solid ${T.red}33`,borderRadius:12,padding:'10px 8px',cursor:'pointer',color:T.red,fontSize:12,fontWeight:800,fontFamily:'inherit'}}>Remove</button>
-          </div>
-        </div>`:html`<div style=${{display:'flex',gap:8}}>
-          <input type="password" value=${newAppPass} onChange=${e=>setNewAppPass(e.target.value)} placeholder="Set a password, then tap Enabled above" style=${{...iSt(T),fontSize:13,flex:1}}/>
         </div>`}
       </div>
       <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
@@ -3086,19 +3052,12 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
       </div>`;
     })()}
     ${showF&&(()=>{
-      const exC=[...new Set(staff.filter(s=>s.id!==editId&&s.client).map(s=>s.client))];const dlId='cdl'+uid();
       return html`<${Mdl} title=${editId?'Edit Staff':'Add Staff'} onClose=${()=>setShowF(false)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:13}}>
         <${Inp} T=${T} label="Full Name *" value=${form.name} onChange=${e=>setForm({...form,name:e.target.value})} placeholder="e.g. Ramesh Kumar"/>
         <${Sel} T=${T} label="Role *" value=${form.role} onChange=${e=>setForm({...form,role:e.target.value})} options=${cats.filter(c=>!(cfg.disabledCats||[]).includes(c)||c===form.role).map(c=>({value:c,label:c+((cfg.disabledCats||[]).includes(c)?' (Disabled)':'')}))}/>
         <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:12,padding:12,display:'flex',flexDirection:'column',gap:12}}>
-          <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8}}>SALARY & CLIENT</div>
+          <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8}}>SALARY</div>
           <${Inp} T=${T} label="Monthly Salary (₹) *" type="number" value=${form.mRate} onChange=${e=>setForm({...form,mRate:e.target.value})} placeholder="What you pay"/>
-          <div style=${{display:'flex',flexDirection:'column',gap:5}}>
-            <label style=${{fontSize:11,color:T.sub,fontWeight:800}}>Punched At (Client)</label>
-            <datalist id=${dlId}>${exC.map(c=>html`<option key=${c} value=${c}/>`)}</datalist>
-            <input list=${dlId} value=${form.client} onChange=${e=>setForm({...form,client:e.target.value})} placeholder=${exC.length>0?'Select or type…':'e.g. ABC Pvt. Ltd.'} style=${iSt(T)} onFocus=${e=>e.target.style.borderColor=T.acc} onBlur=${e=>e.target.style.borderColor=T.bdr}/>
-            ${exC.length>0&&html`<div style=${{display:'flex',gap:6,flexWrap:'wrap',marginTop:2}}>${exC.map(c=>html`<button key=${c} onClick=${()=>setForm({...form,client:c})} style=${{background:form.client===c?T.accS:T.card,border:`1px solid ${form.client===c?T.accB:T.bdr}`,color:form.client===c?T.acc:T.sub,borderRadius:20,padding:'4px 11px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>${c}</button>`)}</div>`}
-          </div>
           <${Inp} T=${T} label="Pay as per Record (₹)" type="number" value=${form.recPay} onChange=${e=>setForm({...form,recPay:e.target.value})} placeholder="Statutory/record salary"/>
           ${form.recPay&&html`<div style=${{background:T.blu+'14',borderRadius:8,padding:'6px 10px',fontSize:12,color:T.blu,fontWeight:800}}>Cheque Amount (Record ${selLabel(form.role,cfg,DEF_CHEQUE_SEL,'catChequeCustom')}): ${fR(chequeAmt(form.recPay,cfg,form.role))}/mo</div>`}
           ${form.mRate&&form.recPay&&(()=>{
