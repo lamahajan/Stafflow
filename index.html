@@ -278,6 +278,9 @@ const getFY=d=>{const x=new Date(d||Date.now());return x.getMonth()>=3?x.getFull
 const fyLbl=fy=>`FY ${fy}-${String(fy+1).slice(2)}`;
 const inFY=(mon,yr,fy)=>(yr===fy&&mon>=4)||(yr===fy+1&&mon<=3);
 const K={staff:'sf8_s',adv:'sf8_a',sal:'sf8_sl',chq:'sf8_c',cats:'sf8_ct',cfg:'sf8_cfg'};
+// Lightweight hash for the Settings PIN — avoids storing it as plain text in localStorage/backup
+// exports. Not cryptographic-grade, but sufficient to stop a casual glance at raw saved data.
+const simpleHash=str=>{let h=0;const s=String(str);for(let i=0;i<s.length;i++){h=(Math.imul(31,h)+s.charCodeAt(i))|0;}return (h>>>0).toString(36);};
 let _db=null;
 const initFB=async fbcfg=>{
   if(!fbcfg?.apiKey||!fbcfg?.databaseURL)return{ok:false,err:'Missing API Key or Database URL'};
@@ -297,6 +300,18 @@ const initFB=async fbcfg=>{
 const teardownFB=async()=>{try{const ex=window.firebase?.apps?.find(a=>a.name==='sf');if(ex)await ex.delete().catch(()=>{});}catch{}_db=null;};
 const ld=async k=>{try{if(_db){const s=await _db.ref('sf8/'+k).once('value');if(s.val()!==null)return s.val();}const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
 const sv=async(k,d)=>{try{localStorage.setItem(k,JSON.stringify(d));if(_db)_db.ref('sf8/'+k).set(d);}catch{}};
+// ── Per-device page access (Firebase-controlled) ──
+// Each browser/device gets a persistent random id. An admin, from any one connected device, can flip
+// which pages (Dashboard/Salary/Advances/Cheques/Settings) are visible on any OTHER registered device —
+// enforced live via the 'sf8/devices/{id}' Firebase node, since there's no way to gate a specific piece
+// of hardware without a shared backend.
+const PAGE_KEYS=[{k:'dash',t:0,l:'Dashboard'},{k:'sal',t:1,l:'Salary (+ Bulk)'},{k:'adv',t:2,l:'Advances'},{k:'chq',t:3,l:'Cheques'},{k:'set',t:4,l:'Settings'}];
+const DEF_PERMS={dash:true,sal:true,adv:true,chq:true,set:true};
+const getDeviceId=()=>{let id=localStorage.getItem('sf8_device_id');if(!id){id=uid()+uid();localStorage.setItem('sf8_device_id',id);}return id;};
+// Employee IDs are alphanumeric (LIS0001, LT0001, LD0001…) built off an ever-increasing per-prefix
+// counter (see nextEmpIdFor below) — never off staff.length or array position — so a deleted staff's
+// ID is never reused.
+const empIdStr=(n,prefix='LIS')=>prefix+String(n).padStart(3,'0');
 const TH={
   dark:{bg:'#0D0F14',surf:'#13161D',card:'#181B24',bdr:'#1E2130',bdr2:'#2A2E42',txt:'#F1F2F6',sub:'#9DA3B4',mut:'#4B5270',acc:'#0071e3',accAlt:'#0064cc',accS:'rgba(0,113,227,.13)',accB:'rgba(0,113,227,.3)',grn:'#10B981',red:'#EF4444',blu:'#3B82F6',yel:'#F59E0B',pur:'#A855F7',inBg:'#1A1D26'},
   light:{bg:'#f2f2f7',surf:'rgba(255,255,255,0.85)',card:'#ffffff',bdr:'rgba(0,0,0,0.08)',bdr2:'rgba(0,0,0,0.05)',txt:'#1d1d1f',sub:'#6e6e73',mut:'#86868b',acc:'#0071e3',accAlt:'#0064cc',accS:'rgba(0,113,227,0.08)',accB:'rgba(0,113,227,0.3)',grn:'#34c759',red:'#ff3b30',blu:'#0071e3',yel:'#ff9f0a',pur:'#8B5CF6',inBg:'#ffffff'},
@@ -332,11 +347,35 @@ const Ico=({n,s=20,c='currentColor'})=>{
     sync:html`<svg ...${p}><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
     pct:html`<svg ...${p}><circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><line x1="5" y1="19" x2="19" y2="5"/></svg>`,
     xls:html`<svg ...${p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
+    lock:html`<svg ...${p}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+    id:html`<svg ...${p}><rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8.5" cy="12" r="2"/><path d="M14 10h6M14 14h4"/></svg>`,
   };
   return d[n]||null;
 };
 const iSt=T=>({background:T.inBg,border:`1px solid ${T.bdr}`,borderRadius:14,color:T.txt,padding:'11px 14px',fontSize:14,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit'});
-const Badge=({role,T,cats})=>{const c=CC[cats.indexOf(role)%CC.length]||T.acc;return html`<span style=${{background:'transparent',color:c,border:`1.3px solid ${c}66`,padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:800}}>${role}</span>`;};
+const catCode=(cfg,role)=>((cfg&&cfg.catCodes)||{})[role]||'';
+// Auto-generates a category Code: always starts with 'L', then the category name's first letter;
+// if that pair is already taken by another category, tries the name's 2nd letter, 3rd, etc.
+// Falls back to L + first letter + a number if the whole name is exhausted. Purely a default —
+// the Code stays freely editable per category via the Code box in Settings → Staff Categories.
+const autoCatCode=(name,existingCodes)=>{
+  const used=new Set(Object.values(existingCodes||{}).map(c=>(c||'').toUpperCase()).filter(Boolean));
+  const letters=(name||'').toUpperCase().replace(/[^A-Z]/g,'');
+  for(const ch of letters){const code='L'+ch;if(!used.has(code))return code;}
+  const base='L'+(letters[0]||'X');let n=2;while(used.has(base+n))n++;return base+n;
+};
+// Employee IDs now use each category's short Code (e.g. LT for Teacher, LD for Driver) as the prefix,
+// falling back to 'LIS' for categories with no code set. Each prefix keeps its own running counter in
+// cfg.empIdCounters (e.g. {LT:3, LD:12, LIS:40}) so switching a category's code never reuses a number.
+// The legacy global cfg.empIdCounter (pre-category-code staff) is migrated into the 'LIS' bucket on first use.
+const nextEmpIdFor=(cfg,role)=>{
+  const prefix=catCode(cfg,role)||'LIS';
+  const counters={...((cfg&&cfg.empIdCounters)||{})};
+  if(prefix==='LIS'&&counters.LIS===undefined&&cfg&&cfg.empIdCounter)counters.LIS=cfg.empIdCounter;
+  const next=(counters[prefix]||0)+1;
+  return{prefix,next,counters:{...counters,[prefix]:next},empId:empIdStr(next,prefix)};
+};
+const Badge=({role,T,cats,cfg})=>{const c=CC[cats.indexOf(role)%CC.length]||T.acc;const code=catCode(cfg,role);return html`<span style=${{background:'transparent',color:c,border:`1.3px solid ${c}66`,padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:800}}>${code&&html`<span style=${{opacity:.75,marginRight:4}}>${code}</span>`}${role}</span>`;};
 const SC=({label,value,sub,accent,icon,T})=>html`<div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:18,padding:14,boxShadow:'0 1px 8px rgba(0,0,0,0.04)',display:'flex',flexDirection:'column',gap:5,flex:1,minWidth:0}}><div style=${{display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:9,color:T.sub,fontWeight:800,letterSpacing:.8,textTransform:'uppercase'}}>${label}</span>${icon&&html`<${Ico} n=${icon} s=${13} c=${accent}/>`}</div><span style=${{fontSize:19,fontWeight:900,color:accent,fontFamily:"'Inter'",letterSpacing:-.5}}>${value}</span>${sub&&html`<span style=${{fontSize:10,color:T.mut}}>${sub}</span>`}</div>`;
 const Inp=({label,T,...p})=>html`<div style=${{display:'flex',flexDirection:'column',gap:5}}>${label&&html`<label style=${{fontSize:11,color:T.sub,fontWeight:800}}>${label}</label>`}<input ...${p} style=${iSt(T)} onFocus=${e=>e.target.style.borderColor=T.acc} onBlur=${e=>e.target.style.borderColor=T.bdr}/></div>`;
 const Sel=({label,options,T,...p})=>html`<div style=${{display:'flex',flexDirection:'column',gap:5}}>${label&&html`<label style=${{fontSize:11,color:T.sub,fontWeight:800}}>${label}</label>`}<select ...${p} style=${{...iSt(T),appearance:'none',cursor:'pointer'}}>${options.map(o=>html`<option key=${o.value??o} value=${o.value??o}>${o.label??o}</option>`)}</select></div>`;
@@ -492,7 +531,7 @@ function genSalarySlipPDF(salRec, staffRec, cfg){
     addImage:(data,ifmt,x,y,w,h)=>realDoc.addImage(data,ifmt,sx(x),sy(y),w*SCALE,h*SCALE),
   };
   const st=cfg.statutory||{};
-  const agencyName=cfg.agencyName||'StaffFlow Agency';
+  const agencyName='Lotus International School';
   const fmt=n=>fRp(n);
   const isBW=cfg&&cfg.reportColor===false;
   const toTitle=s=>{
@@ -906,21 +945,29 @@ async function genPDF(mon,yr,monSal,allAdv,allChq,staff,msgFn,cfg){
   const ds=new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'});
   const rptStaffIds=new Set(staff.filter(s=>s.inReport!==false).map(s=>s.id));
   const monSalF=monSal.filter(s=>rptStaffIds.has(s.sid));
-  const tN=monSalF.reduce((s,x)=>s+Number(x.net),0),tAd=monSalF.reduce((s,x)=>s+Number(x.advDed),0),tC=monSalF.reduce((s,x)=>s+Number(x.cp||0),0),tMR=monSalF.reduce((s,x)=>s+Number((x.gross!==undefined?x.gross:x.mRate||0))+Number(x.mDedAmt||0)-Number(x.advDed||0),0),tDiff=tC-tMR;
+  // Payable Salary = Monthly Salary − Absent ded − Advance deducted (already what s.net holds post-fix).
+  // Cheque Amount / Margin are only shown for staff whose SETUP has a Pay as per Record (recPay) that
+  // is filled in AND different from their Monthly Salary rate (mRate) — i.e. staff with a genuine
+  // separate statutory/cheque billing setup. Staff with recPay blank, or recPay===mRate, show '—' for both.
+  const rowActive=s=>Number(s.recPay||0)>0&&Number(s.recPay)!==Number(s.mRate);
+  const tN=monSalF.reduce((s,x)=>s+Number(x.net),0),tAd=monSalF.reduce((s,x)=>s+Number(x.advDed),0);
+  const tPay=monSalF.reduce((s,x)=>s+Number(x.net),0);
+  const tC=monSalF.reduce((s,x)=>rowActive(x)?s+Number(x.cp||0):s,0);
+  const tMargin=monSalF.reduce((s,x)=>rowActive(x)?s+Number(x.margin||0):s,0);
   const mChq=allChq.filter(c=>{const d=new Date(c.date);return d.getMonth()+1===mon&&d.getFullYear()===yr;});
   const pAdL=allAdv.filter(a=>a.status==='pending'),pChqL=allChq.filter(c=>c.status==='pending');
   const pAmt=pAdL.reduce((s,a)=>s+Number(a.amount),0)+pChqL.reduce((s,c)=>s+Number(c.expected||c.ret),0);
   pdfPage(doc,'MONTHLY REPORT',lbl,['Period: '+lbl,'Staff in Report: '+monSalF.length,'Generated: '+ds,'Outstanding: '+fRp(pAmt)],1,1);
   let y=35;
-  y=summBox(doc,[['Monthly Salary',fRp(tMR),PRP],['Adv. Deducted',fRp(tAd),RED_],['Cheque Amount',fRp(tC),BLU_],['Difference',fRp(tDiff),tDiff>=0?GRN_:RED_]],y);
+  y=summBox(doc,[['Payable Salary',fRp(tPay),PRP],['Adv. Deducted',fRp(tAd),RED_],['Cheque Amount',fRp(tC),BLU_],['Margin',fRp(tMargin),tMargin>=0?GRN_:RED_]],y);
   if(pAmt>0){doc.setFillColor(255,247,237);doc.setDrawColor(251,191,36);doc.setLineWidth(0.3);doc.roundedRect(14,y,182,8,1.5,1.5,'FD');doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(...AMB);doc.text('⚠  OUTSTANDING DUES: '+fRp(pAmt)+' ('+pAdL.length+' advances, '+pChqL.length+' unsettled cheques)',17,y+5.2);y+=11;}
   if(monSalF.length){y=secHead(doc,'Salary Statement — '+lbl,y);
-    doc.autoTable({startY:y,head:[['Sr.','Staff Name','Absents','Advance','Cheque Amount','Monthly Salary','Difference']],
-      body:monSalF.map((s,i)=>{const salAfterAbs=Number(s.gross!==undefined?s.gross:s.mRate||0)+Number(s.mDedAmt||0)-Number(s.advDed||0);const diff=Number(s.cp||0)-salAfterAbs;return[i+1,s.name,String(s.abs),s.advDed>0?fRp(s.advDed):'Nil',s.cp>0?fRp(s.cp):'Nil',fRp(salAfterAbs),(diff>=0?'+':'')+fRp(diff)];}),
-      foot:[['','TOTAL',monSalF.reduce((s,x)=>s+x.abs,0),fRp(tAd),fRp(tC),fRp(tMR),(tDiff>=0?'+':'')+fRp(tDiff)]],
+    doc.autoTable({startY:y,head:[['Sr.','Staff Name','Absents','Advance Deducted','Payable Salary','Cheque Amount','Margin']],
+      body:monSalF.map((s,i)=>{const act=rowActive(s);return[i+1,s.name,String(s.abs),s.advDed>0?fRp(s.advDed):'Nil',fRp(s.net),act?fRp(s.cp):'—',act?((Number(s.margin||0)>=0?'+':'')+fRp(s.margin||0)):'—'];}),
+      foot:[['','TOTAL',monSalF.reduce((s,x)=>s+x.abs,0),fRp(tAd),fRp(tPay),fRp(tC),(tMargin>=0?'+':'')+fRp(tMargin)]],
       styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},footStyles:{...TF},
       columnStyles:{0:{cellWidth:8,halign:'center'},2:{halign:'center'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}},
-      didParseCell:d=>{if(d.section==='body'&&d.column.index===6){d.cell.styles.textColor=String(d.cell.raw).startsWith('-')?RED_:GRN_;d.cell.styles.fontStyle='bold';}if(d.section==='foot'){d.cell.styles.textColor=d.column.index===6?(tDiff>=0?GRN_:RED_):BLK;}}});
+      didParseCell:d=>{if(d.section==='body'&&d.column.index===6&&d.cell.raw!=='—'){d.cell.styles.textColor=String(d.cell.raw).startsWith('-')?RED_:GRN_;d.cell.styles.fontStyle='bold';}if(d.section==='foot'){d.cell.styles.textColor=d.column.index===6?(tMargin>=0?GRN_:RED_):BLK;}}});
     y=doc.lastAutoTable.finalY+6;}
   if(mChq.length){if(y>235){doc.addPage();pdfPage(doc,'MONTHLY REPORT',lbl,[],1,1);y=35;}
     y=secHead(doc,'Cheque Returns — '+lbl,y);
@@ -1069,38 +1116,122 @@ function App(){
   const[staff,setStaff]=useState([]);const[adv,setAdv]=useState([]);const[sal,setSal]=useState([]);const[chq,setChq]=useState([]);
   const[cats,setCats]=useState(DEF_CATS);const[cfg,setCfg]=useState({theme:'light',fys:[]});
   const[toast,setToast]=useState(null);const[ready,setReady]=useState(false);const[fbSt,setFbSt]=useState('disconnected');
+  const[setUnlocked,setSetUnlocked]=useState(false);const[pinInput,setPinInput]=useState('');const[pinErr,setPinErr]=useState(false);
+  const[myDeviceId]=useState(getDeviceId);
+  const[myPerms,setMyPerms]=useState(null); // null = not yet loaded / no Firebase → treat as all-enabled
+  const[myCatPerms,setMyCatPerms]=useState(null); // per-device category visibility, null = all-enabled
+  const[allDevices,setAllDevices]=useState({});
   useEffect(()=>{(async()=>{
+    // Every staff member is at the same client — this was previously an editable per-staff field, now fixed.
+    // Silently normalizes old data (from local storage or Firebase, on any device) without needing an edit.
+    const fixClients=arr=>{
+      if(!arr||!arr.some(x=>x.client!=='Lotus International School'))return null;
+      return arr.map(x=>({...x,client:'Lotus International School'}));
+    };
     const[s,a,sl,c,ct,cf]=await Promise.all([ld(K.staff),ld(K.adv),ld(K.sal),ld(K.chq),ld(K.cats),ld(K.cfg)]);
-    if(s)setStaff(s);if(a)setAdv(a);if(sl)setSal(sl);if(c)setChq(c);if(ct)setCats(ct);
+    let staffArr=s||null,staffChanged=false;
+    if(staffArr){const fx=fixClients(staffArr);if(fx){staffArr=fx;staffChanged=true;}}
+    if(a)setAdv(a);if(sl)setSal(sl);if(c)setChq(c);if(ct)setCats(ct);
     const mc={theme:'light',fys:[],...(cf||{})};
+    // ── Backfill category Codes for any categories created before this feature existed ──
+    const catList=ct||cats;
+    let catCodeChanged=false;
+    if(catList&&catList.some(c=>!catCode(mc,c))){
+      const nm={...(mc.catCodes||{})};
+      catList.forEach(c=>{if(!nm[c]){nm[c]=autoCatCode(c,nm);catCodeChanged=true;}});
+      mc.catCodes=nm;
+    }
+    // ── Backfill Employee IDs for any staff created before this feature existed ──
+    // Uses each staff member's category Code as the ID prefix (falls back to LIS), with a running
+    // counter per prefix so re-running this never reuses or skips a number.
+    let empChanged=false;
+    if(staffArr&&staffArr.some(x=>!x.empId)){
+      staffArr=staffArr.map(x=>{
+        if(x.empId)return x;
+        empChanged=true;
+        const{prefix,next,counters,empId}=nextEmpIdFor(mc,x.role);
+        mc.empIdCounters=counters;
+        return{...x,empId};
+      });
+      staffChanged=true;
+    }
+    if(staffArr)setStaff(staffArr);
+    if(staffArr&&staffChanged)sv(K.staff,staffArr);
     // ── Auto-detect FYs from existing salary records ──
+    let fyChanged=false;
     if(sl&&sl.length){
       const detectedFYs=new Set(mc.fys||[]);
       sl.forEach(r=>{const fy=inFY(r.mon,r.yr,r.yr-1)?r.yr-1:r.yr;detectedFYs.add(getFY(new Date(r.yr,r.mon-1,1)));});
       const sorted=[...detectedFYs].sort();
       if(sorted.join()!==(mc.fys||[]).join()){
-        mc.fys=sorted;
+        mc.fys=sorted;fyChanged=true;
         // set most recent as active if none set
         if(!mc.activeFY)mc.activeFY=sorted[sorted.length-1];
-        sv(K.cfg,mc);
       }
     }
+    if(empChanged||fyChanged||catCodeChanged)sv(K.cfg,mc);
     setCfg(mc);
     if(mc.fbcfg?.apiKey){setFbSt('connecting');const r=await initFB(mc.fbcfg);
       if(r.ok){setFbSt('connected');
-        const _sets={staff:setStaff,adv:setAdv,sal:setSal,chq:setChq,cats:setCats};
-        const _def={staff:[],adv:[],sal:[],chq:[],cats:DEF_CATS};
-        ['staff','adv','sal','chq','cats'].forEach(k=>{_db.ref('sf8/'+K[k]).on('value',sn=>{const v=sn.val()!==null?sn.val():_def[k];_sets[k](v);localStorage.setItem(K[k],JSON.stringify(v));});});}
+        const _sets={staff:v=>{const fx=fixClients(v);if(fx){setStaff(fx);sv(K.staff,fx);}else setStaff(v);},adv:setAdv,sal:setSal,chq:setChq,cats:setCats,cfg:v=>setCfg({theme:'light',fys:[],...v})};
+        const _def={staff:[],adv:[],sal:[],chq:[],cats:DEF_CATS,cfg:{theme:'light',fys:[]}};
+        ['staff','adv','sal','chq','cats','cfg'].forEach(k=>{_db.ref('sf8/'+K[k]).on('value',sn=>{const v=sn.val()!==null?sn.val():_def[k];_sets[k](v);localStorage.setItem(K[k],JSON.stringify(v));});});
+        // ── Register this device & subscribe to its own permissions + the full device list ──
+        _db.ref('sf8/devices/'+myDeviceId).once('value').then(snap=>{
+          if(snap.val()===null){_db.ref('sf8/devices/'+myDeviceId).set({name:'Device '+myDeviceId.slice(-4).toUpperCase(),pages:DEF_PERMS,lastSeen:Date.now()});}
+          else{_db.ref('sf8/devices/'+myDeviceId+'/lastSeen').set(Date.now());}
+        });
+        _db.ref('sf8/devices/'+myDeviceId+'/pages').on('value',sn=>{setMyPerms(sn.val()||DEF_PERMS);});
+        _db.ref('sf8/devices/'+myDeviceId+'/cats').on('value',sn=>{setMyCatPerms(sn.val()||null);});
+        _db.ref('sf8/devices').on('value',sn=>{setAllDevices(sn.val()||{});});
+      }
       else setFbSt('error');}
     setReady(true);
   })();},[]);
   const msg=(m,type='ok')=>{setToast({msg:m,type});setTimeout(()=>setToast(null),2600);};
-  const pS=d=>{setStaff(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.staff,nd);return nd;});};const pA=d=>{setAdv(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.adv,nd);return nd;});};const pSl=d=>{setSal(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.sal,nd);return nd;});};const pC=d=>{setChq(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.chq,nd);return nd;});};const pCat=d=>{setCats(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.cats,nd);return nd;});};const pCfg=d=>{setCfg(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.cfg,nd);return nd;});};
+  const pS=d=>{setStaff(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.staff,nd);return nd;});};
+  // Raw setters — used by Settings, which always works with the full, unfiltered staff/sal/adv/chq.
+  const pARaw=d=>{setAdv(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.adv,nd);return nd;});};
+  const pSlRaw=d=>{setSal(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.sal,nd);return nd;});};
+  const pCRaw=d=>{setChq(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.chq,nd);return nd;});};
+  // Merge-safe setters — used by every other tab, which only ever sees the VISIBLE (enabled-category)
+  // subset of adv/sal/chq. Any array they build (via spread/map/filter on that subset) only reflects
+  // that subset, so before persisting we always re-merge back whatever records belong to
+  // disabled-category staff (from the true previous state) — a save from a filtered view can never
+  // delete or duplicate them.
+  const visIdsNow=()=>{const dc=cfg.disabledCats||[];return new Set(staff.filter(s=>!dc.includes(s.role)&&catEnabledForMe(s.role)).map(s=>s.id));};
+  const pA=d=>{setAdv(prev=>{const vIds=visIdsNow();const hidden=prev.filter(x=>!vIds.has(x.staffId));const nd=typeof d==='function'?d(prev.filter(x=>vIds.has(x.staffId))):d;const merged=[...hidden,...nd];sv(K.adv,merged);return merged;});};
+  const pSl=d=>{setSal(prev=>{const vIds=visIdsNow();const hidden=prev.filter(x=>!vIds.has(x.sid));const nd=typeof d==='function'?d(prev.filter(x=>vIds.has(x.sid))):d;const merged=[...hidden,...nd];sv(K.sal,merged);return merged;});};
+  const pC=d=>{setChq(prev=>{const vIds=visIdsNow();const hidden=prev.filter(x=>!vIds.has(x.staffId));const nd=typeof d==='function'?d(prev.filter(x=>vIds.has(x.staffId))):d;const merged=[...hidden,...nd];sv(K.chq,merged);return merged;});};
+  const pCat=d=>{setCats(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.cats,nd);return nd;});};const pCfg=d=>{setCfg(prev=>{const nd=typeof d==='function'?d(prev):d;sv(K.cfg,nd);return nd;});};
   const T=TH[cfg.theme]||TH.dark;
+  const disabledCats=cfg.disabledCats||[];
+  const catEnabledForMe=c=>myCatPerms?myCatPerms[c]!==false:true;
+  const visCats=cats.filter(c=>!disabledCats.includes(c)&&catEnabledForMe(c));
+  const visStaff=staff.filter(s=>!disabledCats.includes(s.role)&&catEnabledForMe(s.role));
+  const visStaffIds=new Set(visStaff.map(s=>s.id));
+  const visSal=sal.filter(s=>visStaffIds.has(s.sid));
+  const visAdv=adv.filter(a=>visStaffIds.has(a.staffId));
+  const visChq=chq.filter(c=>visStaffIds.has(c.staffId));
   const catC=role=>CC[cats.indexOf(role)%CC.length]||T.acc;
-  const ctx={T,cats,catC,cfg,msg,fbSt,setFbSt,pCfg,setTab};
+  const pageEnabled=k=>myPerms?myPerms[k]!==false:true;
+  const tabKeyMap={0:'dash',1:'sal',2:'adv',3:'chq',4:'set',5:'sal'};
+  const tabAllowed=t=>pageEnabled(tabKeyMap[t]);
+  const setDevicePage=(id,key,val)=>{if(_db)_db.ref('sf8/devices/'+id+'/pages/'+key).set(val);};
+  const setDeviceCat=(id,catName,val)=>{if(_db)_db.ref('sf8/devices/'+id+'/cats/'+catName).set(val);};
+  const renameDevice=(id,name)=>{if(_db)_db.ref('sf8/devices/'+id+'/name').set(name);};
+  const removeDevice=id=>{if(_db)_db.ref('sf8/devices/'+id).remove();};
+  const ctx={T,cats:visCats,catC,cfg,msg,fbSt,setFbSt,pCfg,setTab,myDeviceId,allDevices,setDevicePage,setDeviceCat,renameDevice,removeDevice};
   const aFY=cfg.activeFY||(cfg.fys?.length>0?cfg.fys[cfg.fys.length-1]:getFY());
-  const NAV=[{n:'grid',l:'Dashboard',t:0},{n:'card',l:'Salary',t:1},{n:'dlr',l:'Advances',t:2},{n:'chk',l:'Cheques',t:3},{n:'set',l:'Settings',t:4}];
+  const NAV=[{n:'grid',l:'Dashboard',t:0,k:'dash'},{n:'card',l:'Salary',t:1,k:'sal'},{n:'dlr',l:'Advances',t:2,k:'adv'},{n:'chk',l:'Cheques',t:3,k:'chq'},{n:'set',l:'Settings',t:4,k:'set'}].filter(item=>pageEnabled(item.k));
+  useEffect(()=>{
+    if(!myPerms)return;
+    if(!tabAllowed(tab)){
+      const fallback=NAV[0];
+      if(tab===4)setSetUnlocked(false);
+      setTab(fallback?fallback.t:0);
+    }
+  },[myPerms]);
   if(!ready)return html`<div style=${{background:'#f2f2f7',minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:20}}>
     <div style=${{display:'flex',alignItems:'center',justifyContent:'center',width:64,height:64,background:'linear-gradient(135deg,#0071e3,#5856d6)',borderRadius:18,boxShadow:'0 8px 32px rgba(0,113,227,.35)'}}>
       <${Ico} n="ppl" s=${32} c="#fff"/>
@@ -1123,12 +1254,12 @@ function App(){
         <div style=${{background:`linear-gradient(135deg,${T.acc},${T.accAlt})`,borderRadius:11,padding:9,display:'flex'}}><${Ico} n="ppl" s=${18} c="#fff"/></div>
         <div>
           <div style=${{fontSize:16,fontWeight:900,color:T.txt}}>StaffFlow</div>
-          <div style=${{fontSize:10,color:T.sub}}>${fyLbl(aFY)} · ${staff.length} staff</div>
+          <div style=${{fontSize:10,color:T.sub}}>${fyLbl(aFY)} · ${visStaff.length} staff</div>
         </div>
       </div>
       <!-- Nav Items -->
       <div style=${{display:'flex',flexDirection:'column',gap:3,flex:1}}>
-        ${NAV.map(item=>{const active=tab===item.t;const badge=item.t===2?adv.filter(a=>a.status==='pending').length:item.t===3?chq.filter(c=>c.status==='pending').length:0;return html`<button key=${item.n} onClick=${()=>setTab(item.t)} style=${{display:'flex',alignItems:'center',gap:11,padding:'10px 13px',borderRadius:12,background:active?T.accS:'transparent',border:active?`1px solid ${T.accB}`:'1px solid transparent',color:active?T.acc:T.sub,cursor:'pointer',fontFamily:'inherit',fontSize:14,fontWeight:active?800:600,width:'100%',textAlign:'left',position:'relative',transition:'all .15s'}}>
+        ${NAV.map(item=>{const active=tab===item.t;const badge=item.t===2?adv.filter(a=>a.status==='pending').length:item.t===3?chq.filter(c=>c.status==='pending').length:0;return html`<button key=${item.n} onClick=${()=>{if(item.t!==4)setSetUnlocked(false);setTab(item.t);}} style=${{display:'flex',alignItems:'center',gap:11,padding:'10px 13px',borderRadius:12,background:active?T.accS:'transparent',border:active?`1px solid ${T.accB}`:'1px solid transparent',color:active?T.acc:T.sub,cursor:'pointer',fontFamily:'inherit',fontSize:14,fontWeight:active?800:600,width:'100%',textAlign:'left',position:'relative',transition:'all .15s'}}>
           <${Ico} n=${item.n} s=${18} c=${active?T.acc:T.sub}/>
           <span>${item.l}</span>
           ${badge>0&&html`<span style=${{marginLeft:'auto',background:T.red,color:'#fff',borderRadius:20,padding:'1px 7px',fontSize:10,fontWeight:900}}>${badge}</span>`}
@@ -1150,7 +1281,7 @@ function App(){
     <div class="sf-header sf-mobile-header" style=${{background:T.surf,borderBottom:`1px solid ${T.bdr}`,padding:'14px 16px 10px',position:'sticky',top:0,zIndex:50,backdropFilter:'saturate(180%) blur(20px)',WebkitBackdropFilter:'saturate(180%) blur(20px)'}}>
       <div style=${{display:'flex',alignItems:'center',gap:10}}>
         <div style=${{background:`linear-gradient(135deg,${T.acc},${T.accAlt})`,borderRadius:11,padding:8,display:'flex',flexShrink:0}}><${Ico} n="ppl" s=${18} c="#fff"/></div>
-        <div style=${{flex:1,minWidth:0}}><div style=${{fontSize:17,fontWeight:900,color:T.txt}}>StaffFlow</div><div style=${{fontSize:11,color:T.sub,whiteSpace:'normal',wordBreak:'break-word'}}>${fyLbl(aFY)} · ${staff.length} staff</div></div>
+        <div style=${{flex:1,minWidth:0}}><div style=${{fontSize:17,fontWeight:900,color:T.txt}}>StaffFlow</div><div style=${{fontSize:11,color:T.sub,whiteSpace:'normal',wordBreak:'break-word'}}>${fyLbl(aFY)} · ${visStaff.length} staff</div></div>
         <div style=${{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
           <div title=${fbSt} style=${{width:8,height:8,borderRadius:'50%',background:fbSt==='connected'?T.grn:fbSt==='connecting'?T.yel:fbSt==='error'?T.red:T.mut,flexShrink:0}}/>
           <button onClick=${()=>pCfg({...cfg,theme:cfg.theme==='dark'?'light':'dark'})} style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:8,padding:6,cursor:'pointer',display:'flex',flexShrink:0}}><${Ico} n=${cfg.theme==='dark'?'sun':'moon'} s=${16} c=${T.sub}/></button>
@@ -1163,19 +1294,30 @@ function App(){
       <div class="sf-content">
         <${Toast} t=${toast} T=${T}/>
         <div key=${tab} class="fu">
-          ${tab===0&&html`<${PgDash}  staff=${staff} adv=${adv} sal=${sal} chq=${chq} aFY=${aFY} ctx=${ctx}/>`}
-          ${tab===1&&html`<${PgSal}   staff=${staff} adv=${adv} setAdv=${pA} sal=${sal} setSal=${pSl} chq=${chq} setChq=${pC} aFY=${aFY} ctx=${ctx}/>`}
-          ${tab===5&&html`<${PgBulk}  staff=${staff} adv=${adv} setAdv=${pA} sal=${sal} setSal=${pSl} chq=${chq} setChq=${pC} aFY=${aFY} ctx=${ctx}/>`}
-          ${tab===2&&html`<${PgAdv}   staff=${staff} adv=${adv} setAdv=${pA} chq=${chq} ctx=${ctx}/>`}
-          ${tab===3&&html`<${PgChq}   staff=${staff} chq=${chq} setChq=${pC} sal=${sal} adv=${adv} setAdv=${pA} ctx=${ctx}/>`}
-          ${tab===4&&html`<${PgSet}   staff=${staff} setStaff=${pS} adv=${adv} setAdv=${pA} sal=${sal} setSal=${pSl} chq=${chq} setChq=${pC} cats=${cats} setCats=${pCat} cfg=${cfg} setCfg=${pCfg} aFY=${aFY} ctx=${ctx}/>`}
+          ${tab===0&&tabAllowed(0)&&html`<${PgDash}  staff=${visStaff} adv=${visAdv} sal=${visSal} chq=${visChq} aFY=${aFY} ctx=${ctx}/>`}
+          ${tab===1&&tabAllowed(1)&&html`<${PgSal}   staff=${visStaff} adv=${visAdv} setAdv=${pA} sal=${visSal} setSal=${pSl} chq=${visChq} setChq=${pC} aFY=${aFY} ctx=${ctx}/>`}
+          ${tab===5&&tabAllowed(5)&&html`<${PgBulk}  staff=${visStaff} adv=${visAdv} setAdv=${pA} sal=${visSal} setSal=${pSl} chq=${visChq} setChq=${pC} aFY=${aFY} ctx=${ctx}/>`}
+          ${tab===2&&tabAllowed(2)&&html`<${PgAdv}   staff=${visStaff} adv=${visAdv} setAdv=${pA} chq=${visChq} ctx=${ctx}/>`}
+          ${tab===3&&tabAllowed(3)&&html`<${PgChq}   staff=${visStaff} chq=${visChq} setChq=${pC} sal=${visSal} adv=${visAdv} setAdv=${pA} ctx=${ctx}/>`}
+          ${tab===4&&tabAllowed(4)&&(cfg.settingsPass&&!setUnlocked?html`<div style=${{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:'60vh',gap:16,padding:16}}>
+            <div style=${{display:'flex',alignItems:'center',justifyContent:'center',width:56,height:56,background:T.accS,border:`1px solid ${T.accB}`,borderRadius:16}}><${Ico} n="lock" s=${26} c=${T.acc}/></div>
+            <div style=${{textAlign:'center'}}>
+              <div style=${{fontSize:16,fontWeight:900,color:T.txt}}>Settings Locked</div>
+              <div style=${{fontSize:12,color:T.sub,marginTop:3}}>Enter password to continue</div>
+            </div>
+            <div style=${{width:'100%',maxWidth:280,display:'flex',flexDirection:'column',gap:9}}>
+              <input type="password" value=${pinInput} autoFocus=${true} onChange=${e=>{setPinInput(e.target.value);setPinErr(false);}} onKeyDown=${e=>{if(e.key==='Enter'){if(simpleHash(pinInput)===cfg.settingsPass){setSetUnlocked(true);setPinInput('');setPinErr(false);}else{setPinErr(true);}}}} placeholder="Password" style=${{...iSt(T),textAlign:'center',fontSize:15,letterSpacing:2,...(pinErr?{border:`1px solid ${T.red}`}:{})}}/>
+              ${pinErr&&html`<div style=${{fontSize:11,color:T.red,textAlign:'center',fontWeight:700}}>Incorrect password</div>`}
+              <${Btn} T=${T} ch="Unlock" onClick=${()=>{if(simpleHash(pinInput)===cfg.settingsPass){setSetUnlocked(true);setPinInput('');setPinErr(false);}else{setPinErr(true);}}}/>
+            </div>
+          </div>`:html`<${PgSet}   staff=${staff} setStaff=${pS} adv=${adv} setAdv=${pARaw} sal=${sal} setSal=${pSlRaw} chq=${chq} setChq=${pCRaw} cats=${cats} setCats=${pCat} cfg=${cfg} setCfg=${pCfg} aFY=${aFY} ctx=${ctx}/>`)}
         </div>
       </div>
     </div>
 
     <!-- ── MOBILE BOTTOM NAV ── -->
     <div class="sf-bottom-nav" style=${{position:'fixed',bottom:0,left:0,right:0,background:T.surf,borderTop:`1px solid ${T.bdr}`,padding:'6px 0 14px',zIndex:57,backdropFilter:'saturate(180%) blur(20px)',WebkitBackdropFilter:'saturate(180%) blur(20px)'}}>
-      ${NAV.map(item=>{const active=tab===item.t;const badge=item.t===2?adv.filter(a=>a.status==='pending').length:item.t===3?chq.filter(c=>c.status==='pending').length:0;return html`<button key=${item.n} onClick=${()=>setTab(item.t)} style=${{flex:1,background:'none',border:'none',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:3,color:active?T.acc:T.sub,padding:'4px 0',position:'relative'}}>
+      ${NAV.map(item=>{const active=tab===item.t;const badge=item.t===2?adv.filter(a=>a.status==='pending').length:item.t===3?chq.filter(c=>c.status==='pending').length:0;return html`<button key=${item.n} onClick=${()=>{if(item.t!==4)setSetUnlocked(false);setTab(item.t);}} style=${{flex:1,background:'none',border:'none',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:3,color:active?T.acc:T.sub,padding:'4px 0',position:'relative'}}>
         ${badge>0&&html`<div style=${{position:'absolute',top:2,right:'18%',width:15,height:15,background:T.red,borderRadius:'50%',fontSize:9,fontWeight:900,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center'}}>${badge>9?'9+':badge}</div>`}
         <div style=${{background:active?T.accS:'transparent',borderRadius:9,padding:'5px 8px'}}><${Ico} n=${item.n} s=${19} c=${active?T.acc:T.sub}/></div>
         <span style=${{fontSize:9,fontWeight:active?800:600}}>${item.l}</span>
@@ -1294,7 +1436,9 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     // a category with nothing selected has zero statutory deduction, even though raw amounts above are still computed for reference.
     const active=dedActive(s.role,cfg);
     const mDedAmt=(active.epfEmp?epfEmpAmt:0)+(active.epfPF?epfPFAmt:0)+(active.eps?epsAmt:0)+(active.esicEmp?esicEmpAmt:0)+(active.esicEr?esicErAmt:0);
-    const gross=Math.max(0,proBase-absDed-mDedAmt);
+    // Gross/Payable = Monthly Salary − Absent deduction only. Statutory components (mDedAmt) are
+    // NOT subtracted here — they only feed into Cheque Amount and Margin via each category's chips.
+    const gross=Math.max(0,proBase-absDed);
     const pA=adv.filter(a=>a.staffId===s.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);
     const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);
     const totalPending=pA+pC;
@@ -1393,7 +1537,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
             <div style=${{width:38,height:38,borderRadius:10,background:cc+'22',border:'1.5px solid '+cc+'44',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,fontWeight:900,color:cc,flexShrink:0}}>${s.name[0]}</div>
             <div style=${{flex:1,minWidth:0}}>
               <div style=${{fontSize:14,fontWeight:800,color:T.txt,fontFamily:AD}}>${s.name}</div>
-              <div style=${{fontSize:11,color:T.sub}}>${s.role}${s.client?' · '+s.client:''} · <span style=${{fontFamily:MO,color:T.acc}}>${fR(s.mRate)}/mo</span></div>
+              <div style=${{fontSize:11,color:T.sub}}>${s.role} · <span style=${{fontFamily:MO,color:T.acc}}>${fR(s.mRate)}/mo</span></div>
             </div>
             <div style=${{textAlign:'right',background:net<Number(s.mRate)?T.yel+'12':T.grn+'12',border:'1.5px solid '+(net<Number(s.mRate)?T.yel+'44':T.grn+'44'),borderRadius:10,padding:'5px 10px',minWidth:80}}>
               <div style=${{fontSize:9,color:T.sub,fontFamily:AD,marginBottom:2}}>NET SALARY</div>
@@ -1510,7 +1654,14 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   useEffect(()=>{ld('sf8_att').then(d=>{setAttData(d&&d[yr+'_'+mon]?d[yr+'_'+mon]:{});});},[mon,yr]);
   const monSal=sal.filter(s=>s.mon===mon&&s.yr===yr);
   const recMargin=(s,cfg)=>roundAmt((Number(s.cp)||0)-Number(s.net||0)+marginAddOn(s.role,{epfEmp:s.epfEmpAmt,epfPF:s.epfPFAmt,eps:s.epsAmt,esicEmp:s.esicEmpAmt,esicEr:s.esicErAmt},cfg),cfg.statutory);
-  const undone=staff.filter(s=>!monSal.map(x=>x.sid).includes(s.id));
+  // Staff who quit before this processing month started have nothing left to pay — drop them from
+  // the "ready to process" list. Someone who left DURING this month still shows up (for pro-rata).
+  const leftBeforeMonth=s=>{
+    if(!s.leftDate)return false;
+    const ld=new Date(s.leftDate);
+    return ld.getFullYear()<yr||(ld.getFullYear()===yr&&(ld.getMonth()+1)<mon);
+  };
+  const undone=staff.filter(s=>!monSal.map(x=>x.sid).includes(s.id)&&!leftBeforeMonth(s));
   const catMatch=r=>selCat==='ALL'||r===selCat;
   const filtUndone=(qS.trim()?undone.filter(s=>s.name.toLowerCase().includes(qS.toLowerCase())||(s.client||'').toLowerCase().includes(qS.toLowerCase())):undone).filter(s=>catMatch(s.role));
   const filtSal=(qS.trim()?monSal.filter(s=>s.name.toLowerCase().includes(qS.toLowerCase())||(s.client||'').toLowerCase().includes(qS.toLowerCase())):monSal).filter(s=>catMatch(s.role));
@@ -1561,7 +1712,9 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     // a category with nothing selected has zero statutory deduction, even though raw amounts above are still computed for reference.
     const active=dedActive(s.role,cfg);
     const mDedAmt=(active.epfEmp?epfEmpAmt:0)+(active.epfPF?epfPFAmt:0)+(active.eps?epsAmt:0)+(active.esicEmp?esicEmpAmt:0)+(active.esicEr?esicErAmt:0);
-    const gross=Math.max(0,proBase-absDed-mDedAmt);
+    // Gross/Payable = Monthly Salary − Absent deduction only. Statutory components (mDedAmt) are
+    // NOT subtracted here — they only feed into Cheque Amount and Margin via each category's chips.
+    const gross=Math.max(0,proBase-absDed);
     const advAmt=Math.min(Math.max(0,Number(d2)||0),gross);
     const net=Math.max(0,gross-advAmt);
     return{pDay,absDed,gross,advAmt,net,proBase,effDays,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
@@ -1576,7 +1729,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     if(cpN>0&&margin>0){setChq(prev=>[...prev,{id:uid(),staffId:proc.id,client:proc.client||'',chqAmt:String(margin),ret:String(margin),expected:margin,shortfall:0,date:today(),chqNo:'',note:`Auto — ${mName(mon,yr)}`,status:'pending',autoCreated:true}]);msg('Processed! Cheque return auto-created.');}
     else msg('Salary processed!');setProc(null);};
   const delS=id=>{setSal(sal.filter(s=>s.id!==id));msg('Deleted');};
-  const tNet=monSal.reduce((s,x)=>s+Number(x.net)+Number(x.mDedAmt||0),0),tCp=monSal.reduce((s,x)=>s+Number(x.cp||0),0);
+  const tNet=monSal.reduce((s,x)=>s+Number(x.net),0),tCp=monSal.reduce((s,x)=>s+Number(x.cp||0),0);
   const[showDisb,setShowDisb]=useState(false);
   const[disbCats,setDisbCats]=useState([]);
   const toggleDisbCat=c=>{setDisbCats(prev=>prev.includes(c)?prev.filter(x=>x!==c):[...prev,c]);};
@@ -1631,7 +1784,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
       </div>
     </div>
     <div style=${{marginBottom:13,display:'flex',gap:8,alignItems:'center'}}><select value=${selIdx} onChange=${e=>setSelIdx(Number(e.target.value))} style=${{...iSt(T),appearance:'none',cursor:'pointer',flex:1}}>${fyM.map((m,i)=>html`<option key=${i} value=${i}>${m.label}</option>`)}</select><button onClick=${()=>setShowMonthPicker(true)} style=${{background:T.acc+'18',border:`1px solid ${T.accB}`,borderRadius:10,padding:'10px 12px',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',gap:5,fontFamily:'inherit',fontSize:12,fontWeight:800,color:T.acc}}><${Ico} n="cal" s=${14} c=${T.acc}/></button></div>
-    <div style=${{display:'flex',gap:6,marginBottom:13,overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:2}}>
+    <div style=${{display:'flex',flexWrap:'wrap',gap:6,marginBottom:13,maxHeight:66,overflowY:'auto'}}>
       ${[{k:'ALL',l:'All'},...cats.filter(c=>[...undone,...monSal].some(s=>(s.role||s.role)===c)).map(c=>({k:c,l:c}))].map(({k,l})=>{
         const cnt=k==='ALL'?undone.length+monSal.length:undone.filter(s=>s.role===k).length+monSal.filter(s=>s.role===k).length;
         const ac=selCat===k;
@@ -1657,9 +1810,8 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
           <div>
             <div style=${{fontWeight:800,fontSize:14,color:T.txt}}>${s.name}</div>
             <div style=${{display:'flex',gap:7,alignItems:'center',marginTop:3,flexWrap:'wrap'}}>
-              <${Badge} role=${s.role} T=${T} cats=${cats}/>
+              <${Badge} role=${s.role} T=${T} cats=${cats} cfg=${cfg}/>
               <span style=${{fontSize:11,color:T.acc,fontFamily:"'Inter'"}}>${fR(s.mRate)}/mo</span>
-              ${s.client&&html`<span style=${{fontSize:11,color:T.blu}}>@ ${s.client}</span>`}
             </div>
           </div>
           <${Btn} T=${T} sm ch="Calculate" onClick=${()=>openProc(s)}/>
@@ -1695,7 +1847,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
         </div>
       </div>`;
     })}</div>`}
-    ${filtSal.length>0&&html`<div><div style=${{fontSize:10,fontWeight:800,color:T.sub,marginBottom:8}}>PROCESSED (${filtSal.length}${selCat!=='ALL'?' · '+selCat:''})</div>${filtSal.map(s=>html`<div key=${s.id} onClick=${()=>setViewS(s)} style=${{background:T.card,border:`1px solid ${s.paid?T.grn+'44':T.bdr}`,borderRadius:13,padding:13,marginBottom:10,cursor:'pointer'}}><div style=${{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}><div><div style=${{fontWeight:800,fontSize:14,color:T.txt}}>${s.name}</div><div style=${{display:'flex',gap:5,marginTop:4,flexWrap:'wrap'}}><${Badge} role=${s.role} T=${T} cats=${cats}/>${s.client&&html`<span style=${{fontSize:11,color:T.blu}}>@ ${s.client}</span>`}</div><div style=${{fontSize:11,color:T.sub,marginTop:5}}>${s.abs>0?s.abs+'d absent':'Full month'}${s.advDed>0?' · −'+fR(s.advDed):''}</div></div><div style=${{textAlign:'right'}}><div style=${{fontSize:17,fontWeight:900,color:s.paid?T.grn:T.txt,fontFamily:"'Inter'"}}>${fR(Number(s.net)+Number(s.mDedAmt||0))}</div>${s.cp>0&&html`<div style=${{fontSize:11,color:T.blu}}>Client: ${fR(s.cp)}</div>`}${s.cp>0&&html`<div style=${{fontSize:10,color:recMargin(s,cfg)>=0?T.grn:T.red}}>${recMargin(s,cfg)>=0?'+':''}${fR(recMargin(s,cfg))}</div>`}<div style=${{marginTop:5}}><span style=${{background:s.paid?T.grn+'22':T.yel+'22',color:s.paid?T.grn:T.yel,borderRadius:20,padding:'2px 9px',fontSize:9,fontWeight:800}}>${s.paid?'✓ PAID':'PENDING'}</span></div></div></div><div style=${{display:'flex',gap:8,marginTop:9}} onClick=${e=>e.stopPropagation()}>
+    ${filtSal.length>0&&html`<div><div style=${{fontSize:10,fontWeight:800,color:T.sub,marginBottom:8}}>PROCESSED (${filtSal.length}${selCat!=='ALL'?' · '+selCat:''})</div>${filtSal.map(s=>html`<div key=${s.id} onClick=${()=>setViewS(s)} style=${{background:T.card,border:`1px solid ${s.paid?T.grn+'44':T.bdr}`,borderRadius:13,padding:13,marginBottom:10,cursor:'pointer'}}><div style=${{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}><div><div style=${{fontWeight:800,fontSize:14,color:T.txt}}>${s.name}</div><div style=${{display:'flex',gap:5,marginTop:4,flexWrap:'wrap'}}><${Badge} role=${s.role} T=${T} cats=${cats} cfg=${cfg}/></div><div style=${{fontSize:11,color:T.sub,marginTop:5}}>${s.abs>0?s.abs+'d absent':'Full month'}${s.advDed>0?' · −'+fR(s.advDed):''}</div></div><div style=${{textAlign:'right'}}><div style=${{fontSize:17,fontWeight:900,color:s.paid?T.grn:T.txt,fontFamily:"'Inter'"}}>${fR(Number(s.net))}</div>${s.cp>0&&html`<div style=${{fontSize:11,color:T.blu}}>Client: ${fR(s.cp)}</div>`}${s.cp>0&&html`<div style=${{fontSize:10,color:recMargin(s,cfg)>=0?T.grn:T.red}}>${recMargin(s,cfg)>=0?'+':''}${fR(recMargin(s,cfg))}</div>`}<div style=${{marginTop:5}}><span style=${{background:s.paid?T.grn+'22':T.yel+'22',color:s.paid?T.grn:T.yel,borderRadius:20,padding:'2px 9px',fontSize:9,fontWeight:800}}>${s.paid?'✓ PAID':'PENDING'}</span></div></div></div><div style=${{display:'flex',gap:8,marginTop:9}} onClick=${e=>e.stopPropagation()}>
               <${Btn} T=${T} sm ch=${html`<span style=${{display:'flex',alignItems:'center',gap:3}}><${Ico} n="pdf" s=${12} c="#fff"/>Slip</span>`} onClick=${(e)=>{e.stopPropagation();downloadSalarySlip(s,staff.find(x=>x.id===s.sid)||{},cfg,msg);}}/>
               ${!s.paid&&html`<${Btn} T=${T} sm v="danger" ch="Delete" onClick=${()=>delS(s.id)}/>`}
             </div></div>`)}</div>`}
@@ -1709,7 +1861,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
       const proRataReason=leftWD?'left':'join';
       return html`<${Mdl} title=${'Salary — '+proc.name} onClose=${()=>{setProc(null);setLeftWD(null);setJoinWD(null);}} T=${T}>
         <div style=${{display:'flex',flexDirection:'column',gap:13}}>
-          <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:12,padding:12,display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><${Badge} role=${proc.role} T=${T} cats=${cats}/>${proc.client&&html`<div style=${{fontSize:12,color:T.blu,marginTop:5}}>${proc.client}</div>`}</div><div style=${{textAlign:'right'}}><div style=${{fontSize:19,fontWeight:900,color:T.acc,fontFamily:"'Inter'"}}>${fR(proc.mRate)}</div><div style=${{fontSize:10,color:T.sub}}>÷30 = ${fR(Math.round(pDay))}/day</div></div></div>
+          <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:12,padding:12,display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><${Badge} role=${proc.role} T=${T} cats=${cats} cfg=${cfg}/></div><div style=${{textAlign:'right'}}><div style=${{fontSize:19,fontWeight:900,color:T.acc,fontFamily:"'Inter'"}}>${fR(proc.mRate)}</div><div style=${{fontSize:10,color:T.sub}}>÷30 = ${fR(Math.round(pDay))}/day</div></div></div>
           ${isProRata&&html`<div style=${{background:proRataReason==='left'?T.red+'14':T.grn+'14',border:`1px solid ${proRataReason==='left'?T.red+'44':T.grn+'44'}`,borderRadius:11,padding:'10px 13px',display:'flex',gap:10,alignItems:'center'}}>
             <span style=${{fontSize:20}}>${proRataReason==='left'?'🚪':'🆕'}</span>
             <div>
@@ -1725,6 +1877,9 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
           <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:12,padding:13}}><div style=${{fontSize:10,fontWeight:800,color:T.sub,marginBottom:10}}>BREAKDOWN</div>
             ${isProRata?html`<${RR} T=${T} label=${'Pro-Rata Base ('+effDays+'÷30 × '+fR(proc.mRate)+')'} value=${fR(proBase.toFixed(2))} accent=${proRataReason==='left'?T.red:T.grn}/>`:html`<${RR} T=${T} label="Monthly Rate" value=${fR(proc.mRate)}/>`}<div style=${{height:5}}/>
             <${RR} T=${T} label=${'Absent ('+(parseFloat(abs)||0)+'×'+fR(Math.round(pDay))+')'} value=${'−'+fR(absDed.toFixed(2))} accent=${T.red}/>
+            <${RR} T=${T} label="Gross" value=${fR(gross.toFixed(2))} bold border=${true}/>
+            <${RR} T=${T} label="Deducted" value=${'−'+fR(advAmt.toFixed(2))} accent=${T.red}/>
+            <${RR} T=${T} label="Net Salary (Payable)" value=${fR(net.toFixed(2))} bold accent=${T.acc} border=${true}/>
             ${(()=>{
               const st2=cfg.statutory||{};
               if(mDedAmt<=0)return null;
@@ -1738,14 +1893,11 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
               ];
               const browsTotal=mDedAmt;
               return html`<div style=${{background:T.bg,border:'1px solid '+T.bdr,borderRadius:9,padding:'7px 10px',margin:'4px 0'}}>
-                <div style=${{fontSize:9,fontWeight:800,color:T.sub,marginBottom:5}}>DEDUCTION BREAKDOWN (based on Pay as per Record)</div>
-                ${brows.map(([l,v,isEr])=>html`<${RR} T=${T} label=${l} value=${'−'+fR(v)} accent=${isEr?T.pur:T.red}/>`)}
-                <div style=${{borderTop:'1px solid '+T.bdr,marginTop:5,paddingTop:5}}><${RR} T=${T} label="Total" value=${'−'+fR(browsTotal)}/></div>
+                <div style=${{fontSize:9,fontWeight:800,color:T.sub,marginBottom:5}}>STATUTORY COMPONENTS (used only for Cheque Amount & Margin — not deducted from Gross/Net)</div>
+                ${brows.map(([l,v,isEr])=>html`<${RR} T=${T} label=${l} value=${fR(v)} accent=${isEr?T.pur:T.txt}/>`)}
+                <div style=${{borderTop:'1px solid '+T.bdr,marginTop:5,paddingTop:5}}><${RR} T=${T} label="Total" value=${fR(browsTotal)}/></div>
               </div>`;
             })()}
-            <${RR} T=${T} label="Gross" value=${fR(gross.toFixed(2))} bold border=${true}/>
-            <${RR} T=${T} label="Deducted" value=${'−'+fR(advAmt.toFixed(2))} accent=${T.red}/>
-            <${RR} T=${T} label="Net Salary" value=${fR(net.toFixed(2))} bold accent=${T.acc} border=${true}/>
             ${cpN>0&&html`<div><${RR} T=${T} label="Client Paid" value=${fR(cpN)} accent=${T.blu}/><div style=${{height:5}}/><${RR} T=${T} label="Margin" value=${(margin>=0?'+':'')+fR(margin)} bold accent=${margin>=0?T.grn:T.red} border=${true}/></div>`}
             ${cpN>0&&margin>0&&html`<div style=${{marginTop:9,background:T.grn+'14',borderRadius:8,padding:'7px 10px',fontSize:11,fontWeight:700,color:T.txt}}>✓ Cheque return of ${fR(margin)} auto-created</div>`}
           </div>
@@ -1759,14 +1911,14 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
       const showEpf=vActive.epfEmp&&(viewS.epfEmpAmt||0)>0;
       const showEsic=vActive.esicEmp&&(viewS.esicEmpAmt||0)>0;
       const vMargin=roundAmt((Number(viewS.cp)||0)-Number(viewS.net||0)+marginAddOn(viewS.role,{epfEmp:viewS.epfEmpAmt,epfPF:viewS.epfPFAmt,eps:viewS.epsAmt,esicEmp:viewS.esicEmpAmt,esicEr:viewS.esicErAmt},cfg),cfg.statutory);
-      return html`<${Mdl} title="Salary Slip" onClose=${()=>setViewS(null)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:9}}>${[['Staff',viewS.name],['Role',viewS.role],['Client',viewS.client||'—'],['Period',mName(viewS.mon,viewS.yr)],['Monthly Rate',fR(viewS.mRate)],['Per Day',fR(Math.round(viewS.pDay))],['Absent',viewS.abs],...(showEpf?[
-  ['EPF (Employee 12%)','−'+fR(viewS.epfEmpAmt||0)],
+      return html`<${Mdl} title="Salary Slip" onClose=${()=>setViewS(null)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:9}}>${[['Staff',viewS.name],['Role',viewS.role],['Client',viewS.client||'—'],['Period',mName(viewS.mon,viewS.yr)],['Monthly Rate',fR(viewS.mRate)],['Per Day',fR(Math.round(viewS.pDay))],['Absent',viewS.abs],['Gross',fR(viewS.gross)],['Adv.Ded','−'+fR(viewS.advDed)],['Net Salary (Payable)',fR(viewS.net)],['Client Paid',fR(viewS.cp||0)],...(showEpf?[
+  ['↳ EPF (Employee 12%)',fR(viewS.epfEmpAmt||0)],
   ...(vActive.epfPF?[['  ↳ EPF A/c (Employer '+((viewS.epfPFAmt||0)>0?'3.67%':'')+')',fR(viewS.epfPFAmt||0)]]:[]),
   ...(vActive.eps?[['  ↳ EPS Pension (Employer '+((viewS.epsAmt||0)>0?'8.33%':'')+')',fR(viewS.epsAmt||0)]]:[]),
 ]:[] ),...(showEsic?[
-  ['ESIC (Employee 0.75%)','−'+fR(viewS.esicEmpAmt||0)],
-  ...(vActive.esicEr?[['ESIC (Employer 3.25%)',fR(viewS.esicErAmt||0)]]:[]),
-]:[] ),...((viewS.mDedAmt||0)>0&&!showEpf&&!showEsic?[['Total Deduction','−'+fR(viewS.mDedAmt)]]:[] ),...((viewS.mDedAmt||0)===0?[['Deductions','Nil']]:[] ),['Gross',fR(viewS.gross)],['Adv.Ded','−'+fR(viewS.advDed)],['Net Salary',fR(viewS.net)],['Client Paid',fR(viewS.cp||0)],['Margin',(vMargin>=0?'+':'')+fR(vMargin)],['Status',viewS.paid?'✅ Paid':'⏳ Pending']].map(([l,v])=>html`<div key=${l} style=${{display:'flex',justifyContent:'space-between',borderBottom:`1px solid ${T.bdr}`,paddingBottom:7}}><span style=${{color:T.sub,fontSize:13}}>${l}</span><span style=${{fontSize:13,fontWeight:['Net Salary','Margin','Gross'].includes(l)?800:600,color:l==='Net Salary'?T.acc:l==='Margin'?vMargin>=0?T.grn:T.red:String(l).includes('Employer')?T.pur:T.txt}}>${v}</span></div>`)}</div><//>`;
+  ['↳ ESIC (Employee 0.75%)',fR(viewS.esicEmpAmt||0)],
+  ...(vActive.esicEr?[['↳ ESIC (Employer 3.25%)',fR(viewS.esicErAmt||0)]]:[]),
+]:[] ),...((viewS.mDedAmt||0)>0&&!showEpf&&!showEsic?[['↳ Statutory (used in Cheque/Margin)',fR(viewS.mDedAmt)]]:[] ),['Margin',(vMargin>=0?'+':'')+fR(vMargin)],['Status',viewS.paid?'✅ Paid':'⏳ Pending']].map(([l,v])=>html`<div key=${l} style=${{display:'flex',justifyContent:'space-between',borderBottom:`1px solid ${T.bdr}`,paddingBottom:7}}><span style=${{color:T.sub,fontSize:13}}>${l}</span><span style=${{fontSize:13,fontWeight:['Net Salary (Payable)','Margin','Gross'].includes(l)?800:600,color:l==='Net Salary (Payable)'?T.acc:l==='Margin'?vMargin>=0?T.grn:T.red:String(l).includes('Employer')?T.pur:T.txt}}>${v}</span></div>`)}</div><//>`;
     })()}
     ${showDisb&&html`<${Mdl} title="📄 Disbursement PDF" onClose=${()=>setShowDisb(false)} T=${T}>
       <div style=${{display:'flex',flexDirection:'column',gap:14}}>
@@ -1826,11 +1978,49 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     <//>`}
   </div>`;
 }
+// ── Advances PDF ─────────────────────────────────────────────────────────────
+async function genAdvancesPDF(adv,staff,cats,filterCat,msgFn,cfg){
+  try{
+    msgFn('Generating advances PDF…');
+    applyReportColorMode(cfg);
+    const{jsPDF}=window.jspdf,doc=new jsPDF('p','mm','a4');
+    const ds=new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+    const TS={fontSize:8,cellPadding:3,font:'helvetica'},TH2={fillColor:PRP,textColor:[255,255,255],fontStyle:'bold',fontSize:8},TA={fillColor:ALTROW},TF={fillColor:MID,textColor:BLK,fontStyle:'bold'};
+    const label=filterCat&&filterCat!=='ALL'?filterCat+' — Advances':'All Advances Report';
+    pdfPage(doc,'CASH ADVANCES',label,['Category: '+(filterCat==='ALL'?'All':filterCat),'Total Records: '+adv.length,'Generated: '+ds,'Date: '+ds],1,1);
+    let y=35;
+    const filtered=filterCat&&filterCat!=='ALL'?adv.filter(a=>{const s=staff.find(x=>x.id===a.staffId);return s&&s.role===filterCat;}):adv;
+    const pending=filtered.filter(a=>a.status==='pending');
+    const recovered=filtered.filter(a=>a.status==='deducted');
+    const pAmt=pending.reduce((s,a)=>s+Number(a.amount),0);
+    const rAmt=recovered.reduce((s,a)=>s+Number(a.amount),0);
+    y=summBox(doc,[['Pending',fRp(pAmt),AMB],['Recovered',fRp(rAmt),GRN_],['Total Records',String(filtered.length),PRP]],y);
+    if(pending.length){
+      y=secHead(doc,'Pending Advances ('+pending.length+')',y);
+      doc.autoTable({startY:y,head:[['Sr.','Staff Name','Role','Date','Note','Amount (₹)']],
+        body:pending.map((a,i)=>{const s=staff.find(x=>x.id===a.staffId);return[i+1,s?.name||'—',s?.role||'—',a.date,a.note||'General Advance',fRp(a.amount)];}),
+        styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},
+        columnStyles:{0:{cellWidth:8,halign:'center'},5:{halign:'right'}},
+        foot:[['','','','','TOTAL',fRp(pAmt)]],footStyles:{...TF}});
+      y=doc.lastAutoTable.finalY+8;}
+    if(recovered.length){
+      if(y>230){doc.addPage();pdfPage(doc,'CASH ADVANCES',label,[],1,1);y=35;}
+      y=secHead(doc,'Recovered Advances ('+recovered.length+')',y);
+      doc.autoTable({startY:y,head:[['Sr.','Staff Name','Role','Date','Note','Amount (₹)','Deducted On']],
+        body:recovered.map((a,i)=>{const s=staff.find(x=>x.id===a.staffId);return[i+1,s?.name||'—',s?.role||'—',a.date,a.note||'General Advance',fRp(a.amount),a.dedOn||'—'];}),
+        styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},
+        columnStyles:{0:{cellWidth:8,halign:'center'},5:{halign:'right'},6:{halign:'center',cellWidth:22}},
+        foot:[['','','','','TOTAL',fRp(rAmt),'']],footStyles:{...TF}});}
+    const pg=doc.internal.getNumberOfPages();for(let i=1;i<=pg;i++){doc.setPage(i);pdfPage(doc,'CASH ADVANCES',label,['Category: '+(filterCat==='ALL'?'All':filterCat),'Records: '+filtered.length,'Generated: '+ds,'Pending: '+fRp(pAmt)],i,pg);}
+    doc.save('StaffFlow_Advances_'+(filterCat==='ALL'?'All':filterCat).replace(/\s+/g,'_')+'_'+new Date().toISOString().slice(0,10)+'.pdf');
+    msgFn('Advances PDF downloaded ✓');}catch(e){console.error(e);msgFn('PDF failed','err');}
+}
 function PgAdv({staff,adv,setAdv,chq,ctx}){
-  const{T,cats,msg}=ctx;
+  const{T,cats,msg,cfg}=ctx;
   const[showF,setShowF]=useState(false);
   const[form,setForm]=useState({staffId:'',amount:'',date:today(),note:''});
   const[expanded,setExpanded]=useState(null);
+  const[pdfCat,setPdfCat]=useState('ALL'),[showPdfOpts,setShowPdfOpts]=useState(false);
   const add=()=>{if(!form.staffId||!form.amount)return msg('Select staff & enter amount','err');setAdv([...adv,{id:uid(),...form,status:'pending'}]);msg('Recorded');setShowF(false);setForm({staffId:'',amount:'',date:today(),note:''});};
   const delAdv=id=>{setAdv(adv.filter(a=>a.id!==id));msg('Deleted');};
   const sOpts=[{value:'',label:'Select Staff'},...staff.map(s=>({value:s.id,label:s.name+' ('+s.role+')'}))];
@@ -1841,8 +2031,28 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
   return html`<div style=${{padding:16}}>
     <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:13}}>
       <div><div style=${{fontSize:20,fontWeight:900,color:T.txt}}>Advances</div><div style=${{fontSize:12,color:T.sub}}>Tap staff to expand details</div></div>
-      <${Btn} T=${T} ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="plus" s=${15} c="#fff"/>Add</span>`} onClick=${()=>setShowF(true)}/>
+      <div style=${{display:'flex',gap:7}}>
+        <${Btn} T=${T} sm v="sec" ch=${html`<span style=${{display:'flex',alignItems:'center',gap:4}}><${Ico} n="pdf" s=${14} c=${T.acc}/>PDF</span>`} onClick=${()=>setShowPdfOpts(!showPdfOpts)}/>
+        <${Btn} T=${T} sm ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="plus" s=${15} c="#fff"/>Add</span>`} onClick=${()=>setShowF(true)}/>
+      </div>
     </div>
+    ${showPdfOpts&&html`<div style=${{background:T.card,border:'1px solid '+T.accB,borderRadius:13,padding:13,marginBottom:12}}>
+      <div style=${{fontSize:10,fontWeight:800,color:T.acc,letterSpacing:.8,marginBottom:10}}>PDF EXPORT OPTIONS</div>
+      <div style=${{display:'flex',flexDirection:'column',gap:8}}>
+        <div>
+          <div style=${{fontSize:11,color:T.sub,fontWeight:800,marginBottom:5}}>FILTER BY CATEGORY</div>
+          <div style=${{display:'flex',gap:6,flexWrap:'wrap'}}>
+            ${[{k:'ALL',l:'All Categories'},...cats.map(c=>({k:c,l:c}))].map(({k,l})=>html`<button key=${k} onClick=${()=>setPdfCat(k)}
+              style=${{background:pdfCat===k?T.acc+'22':T.bg,border:'1px solid '+(pdfCat===k?T.accB:T.bdr),color:pdfCat===k?T.acc:T.sub,borderRadius:20,padding:'4px 11px',fontSize:11,fontWeight:800,cursor:'pointer',fontFamily:'inherit'}}>
+              ${l} <span style=${{fontSize:10,opacity:.7}}>(${k==='ALL'?adv.length:adv.filter(a=>{const s=staff.find(x=>x.id===a.staffId);return s&&s.role===k;}).length})</span>
+            </button>`)}
+          </div>
+        </div>
+        <button onClick=${()=>{genAdvancesPDF(adv,staff,cats,pdfCat,msg,ctx.cfg);setShowPdfOpts(false);}} style=${{background:'linear-gradient(135deg,'+T.acc+','+T.accAlt+')',color:'#fff',border:'none',borderRadius:10,padding:'10px',fontSize:13,fontWeight:800,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:7}}>
+          <${Ico} n="pdf" s=${15} c="#fff"/> Generate Advances PDF${pdfCat!=='ALL'?' ('+pdfCat+')':''}
+        </button>
+      </div>
+    </div>`}
     <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:12}}>
       <${SC} T=${T} label="Cash" value=${fR(totalPendAdv)} sub=${adv.filter(a=>a.status==='pending').length+''} accent=${T.red}/>
       <${SC} T=${T} label="Cheques" value=${fR(totalPendChq)} sub=${chq.filter(c=>c.status==='pending').length+''} accent=${T.yel}/>
@@ -1862,7 +2072,7 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
             <div style=${{width:36,height:36,background:cc+'22',border:`1.5px solid ${cc}44`,borderRadius:9,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:900,color:cc,flexShrink:0}}>${s.name[0]}</div>
             <div>
               <div style=${{fontSize:14,fontWeight:800,color:T.txt}}>${s.name}</div>
-              <div style=${{display:'flex',gap:6,marginTop:3,flexWrap:'wrap'}}><${Badge} role=${s.role} T=${T} cats=${cats}/>${s.client&&html`<span style=${{fontSize:11,color:T.blu}}>@ ${s.client}</span>`}</div>
+              <div style=${{display:'flex',gap:6,marginTop:3,flexWrap:'wrap'}}><${Badge} role=${s.role} T=${T} cats=${cats} cfg=${cfg}/></div>
             </div>
           </div>
           <div style=${{display:'flex',alignItems:'center',gap:10}}>
@@ -1954,7 +2164,7 @@ function PgChq({staff,chq,setChq,sal,adv,setAdv,ctx}){
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
           <div style=${{flex:1}}>
             <div style=${{fontWeight:800,fontSize:14,color:T.txt,display:'flex',alignItems:'center',gap:6}}>${s?.name||'Unknown'}${c.autoCreated&&html`<span style=${{fontSize:9,background:T.acc+'22',color:T.acc,borderRadius:20,padding:'1px 6px',fontWeight:800}}>AUTO</span>`}</div>
-            <div style=${{display:'flex',gap:7,marginTop:3,flexWrap:'wrap'}}>${s&&html`<${Badge} role=${s.role} T=${T} cats=${cats}/>`}<span style=${{fontSize:11,color:T.sub}}>${c.date}</span></div>
+            <div style=${{display:'flex',gap:7,marginTop:3,flexWrap:'wrap'}}>${s&&html`<${Badge} role=${s.role} T=${T} cats=${cats} cfg=${cfg}/>`}<span style=${{fontSize:11,color:T.sub}}>${c.date}</span></div>
             <div style=${{marginTop:5}}><div style=${{fontSize:12,color:T.sub}}>Client: <span style=${{color:T.txt,fontWeight:700}}>${c.client}</span></div>${c.chqNo&&html`<div style=${{fontSize:12,color:T.sub}}>Cheque #: ${c.chqNo}</div>`}</div>
           </div>
           <div style=${{textAlign:'right',flexShrink:0,marginLeft:10}}><div style=${{fontSize:10,color:T.sub}}>Expected</div><div style=${{fontSize:18,fontWeight:900,color:T.yel,fontFamily:"'Inter'"}}>${fR(exp)}</div><span style=${{background:T.yel+'22',color:T.yel,borderRadius:20,padding:'2px 8px',fontSize:10,fontWeight:800,display:'inline-block',marginTop:3}}>pending</span></div>
@@ -2054,7 +2264,8 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
     const proBase=pDay*effDays;
     const absDed=pDay*Math.min(absN,effDays);
     const mDedAmt=Number(e.mDedAmt||0);
-    const gross=Math.max(0,proBase-absDed-mDedAmt);
+    // Gross/Payable = Monthly Salary − Absent deduction only (statutory mDedAmt not subtracted here).
+    const gross=Math.max(0,proBase-absDed);
     // keep original advDed (deductions already applied)
     const advDed=Number(e.advDed||0);
     const net=Math.max(0,gross-advDed);
@@ -2222,7 +2433,8 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
       const proBase=pDay*effDays;
       const absDed=pDay*Math.min(absN,effDays);
       const mDedAmt=Number(e.mDedAmt||0);
-      const gross=Math.max(0,proBase-absDed-mDedAmt);
+      // Gross/Payable = Monthly Salary − Absent deduction only (statutory mDedAmt not subtracted here).
+      const gross=Math.max(0,proBase-absDed);
       const advDed=Number(e.advDed||0);
       const previewNet=Math.max(0,gross-advDed);
       const previewMargin=roundAmt(cpN-gross+marginAddOn(e.role,{epfEmp:e.epfEmpAmt,epfPF:e.epfPFAmt,eps:e.epsAmt,esicEmp:e.esicEmpAmt,esicEr:e.esicErAmt},cfg)+advDed,cfg.statutory);
@@ -2307,9 +2519,10 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
   </div>`;
 }
 function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg,setCfg,aFY,ctx}){
-  const{T,catC,msg,fbSt,setFbSt,pCfg}=ctx;
+  const{T,catC,msg,fbSt,setFbSt,pCfg,myDeviceId,allDevices,setDevicePage,setDeviceCat,renameDevice,removeDevice}=ctx;
   const[sec,setSec]=useState('general');
-  const blank={name:'',role:cats[0]||'Driver',mRate:'',recPay:'',client:'',phone:'',join:today(),leftDate:'',epfOvr:'',esicOvr:'',extraDed:'',inReport:true};
+  const enabledCats=cats.filter(c=>!(cfg.disabledCats||[]).includes(c));
+  const blank={name:'',role:enabledCats[0]||cats[0]||'Driver',mRate:'',recPay:'',phone:'',join:today(),leftDate:'',epfOvr:'',esicOvr:'',extraDed:'',inReport:true,empId:''};
   const[showF,setShowF]=useState(false),[editId,setEditId]=useState(null),[form,setForm]=useState(blank);
   const[ledger,setLedger]=useState(null),[q,setQ]=useState(''),[qCat,setQCat]=useState('ALL');
   const[nCat,setNCat]=useState(''),[eCI,setECI]=useState(null),[eCV,setECV]=useState('');
@@ -2326,19 +2539,29 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
   const[updCapMode,setUpdCapMode]=useState('higher');
   const[prevBase,setPrevBase]=useState(15000);
   const[expCat,setExpCat]=useState('ALL');
-  const openAdd=()=>{setEditId(null);setForm({...blank,role:cats[0]||'Driver'});setShowF(true);};
-  const openEdit=s=>{setEditId(s.id);setForm({name:s.name,role:s.role,mRate:s.mRate,recPay:s.recPay||'',client:s.client||'',phone:s.phone||'',join:s.join,leftDate:s.leftDate||'',epfOvr:s.epfOvr||'',esicOvr:s.esicOvr||'',extraDed:s.extraDed||'',inReport:s.inReport!==false});setShowF(true);};
+  const[newPass,setNewPass]=useState('');
+  const openAdd=()=>{setEditId(null);setForm({...blank,role:enabledCats[0]||cats[0]||'Driver'});setShowF(true);};
+  const openEdit=s=>{setEditId(s.id);setForm({name:s.name,role:s.role,mRate:s.mRate,recPay:s.recPay||'',phone:s.phone||'',join:s.join,leftDate:s.leftDate||'',epfOvr:s.epfOvr||'',esicOvr:s.esicOvr||'',extraDed:s.extraDed||'',inReport:s.inReport!==false,empId:s.empId||''});setShowF(true);};
   const saveS=()=>{
     if(!form.name.trim()||!form.mRate)return msg('Fill name & salary','err');
-    const staffObj={...form};
+    let empId=(form.empId||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+    let newCounters=null;
+    if(!empId){
+      const r=nextEmpIdFor(cfg,form.role);
+      empId=r.empId;newCounters=r.counters;
+    }
+    const dupe=staff.some(x=>x.id!==editId&&(x.empId||'').toUpperCase()===empId);
+    if(dupe)return msg('Employee ID "'+empId+'" is already in use — pick another','err');
+    const staffObj={...form,empId,client:'Lotus International School'};
     if(editId)setStaff(staff.map(s=>s.id===editId?{...s,...staffObj}:s));
     else setStaff([...staff,{id:uid(),...staffObj}]);
+    if(newCounters)pCfg({...cfg,empIdCounters:newCounters});
     msg(editId?'Updated':'Added');setShowF(false);
   };
   const delStaff=id=>{setStaff(staff.filter(s=>s.id!==id));setSal(sal.filter(s=>s.sid!==id));setAdv(adv.filter(a=>a.staffId!==id));setChq(chq.filter(c=>c.staffId!==id));msg('Staff and all records deleted');};
-  const addCat=()=>{const v=nCat.trim();if(!v)return;if(cats.includes(v))return msg('Exists','err');setCats([...cats,v]);setNCat('');msg('Added');};
+  const addCat=()=>{const v=nCat.trim();if(!v)return;if(cats.includes(v))return msg('Exists','err');setCats([...cats,v]);const code=autoCatCode(v,cfg.catCodes);pCfg({...cfg,catCodes:{...(cfg.catCodes||{}),[v]:code}});setNCat('');msg('Added — code '+code);};
   const removeCat=i=>setCats(cats.filter((_,ci)=>ci!==i));
-  const saveCE=()=>{if(eCI===null)return;const v=eCV.trim();if(!v)return;setCats(cats.map((c,i)=>i===eCI?v:c));setECI(null);setECV('');msg('Updated');};
+  const saveCE=()=>{if(eCI===null)return;const v=eCV.trim();if(!v)return;const old=cats[eCI];setCats(cats.map((c,i)=>i===eCI?v:c));if(old!==v&&cfg.catCodes&&cfg.catCodes[old]!==undefined){const nm={...cfg.catCodes};nm[v]=nm[old];delete nm[old];pCfg({...cfg,catCodes:nm});}setECI(null);setECV('');msg('Updated');};
   const fyList=cfg.fys?.length>0?cfg.fys:[getFY()],aFY2=cfg.activeFY||fyList[fyList.length-1];
   const addFY=()=>{const y=parseInt(nFY);if(!y||y<2020||y>2035)return msg('Enter valid year','err');if(fyList.includes(y))return msg('Already exists','err');const nd={...cfg,fys:[...fyList,y].sort()};setCfg(nd);setNFY('');msg(fyLbl(y)+' created');};
   const delFY=(y)=>{
@@ -2364,12 +2587,12 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
   const doDelete=()=>{if(delTypes.sal)setSal([]);if(delTypes.adv)setAdv([]);if(delTypes.chq)setChq([]);setDelTypes({sal:false,adv:false,chq:false});setDelConfirm(false);msg('Deleted');};
   const doDeleteStaffBulk=()=>{const ids=[...delStaffIds];setStaff(staff.filter(s=>!ids.includes(s.id)));setSal(sal.filter(s=>!ids.includes(s.sid)));setAdv(adv.filter(a=>!ids.includes(a.staffId)));setChq(chq.filter(c=>!ids.includes(c.staffId)));setDelStaffIds(new Set());setDelConfirm(false);msg(ids.length+' staff and all their records deleted');};
   const clearAll=()=>{setStaff([]);setSal([]);setAdv([]);setChq([]);setCats(DEF_CATS);setCfg({theme:cfg.theme,fys:[],activeFY:null,fbcfg:cfg.fbcfg});setDelConfirm(false);msg('All data cleared');};
-  const fl=staff.filter(s=>(qCat==='ALL'||s.role===qCat)&&[s.name,s.role,s.client||''].join(' ').toLowerCase().includes(q.toLowerCase()));
+  const fl=staff.filter(s=>(qCat==='ALL'||s.role===qCat)&&[s.name,s.role,s.client||'',s.empId||''].join(' ').toLowerCase().includes(q.toLowerCase()));
   const SEC_GROUPS=[
     {g:'General',items:[{k:'general',l:'General',n:'sun'}]},
     {g:'Staff',items:[{k:'staff',l:'Staff',n:'ppl'}]},
     {g:'',items:[{k:'statutory',l:'EPF/ESIC',n:'pct'},{k:'salupd',l:'Salary Update & FY',n:'dlr'}]},
-    {g:'Data',items:[{k:'data',l:'Backup & Sync',n:'dn'}]},
+    {g:'',items:[{k:'data',l:'Backup & Sync',n:'dn'},{k:'devices',l:'Devices',n:'lock'}]},
     {g:'Danger Zone',items:[{k:'danger',l:'Delete Data',n:'tr'}]},
   ];
   return html`<div style=${{padding:16}}>
@@ -2385,29 +2608,42 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
     </div>
     ${sec==='general'&&html`<div style=${{display:'flex',flexDirection:'column',gap:14}}>
       <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
-        <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:8}}>AGENCY NAME (appears on salary slips)</div>
-        <input value=${cfg.agencyName||''} onChange=${e=>pCfg({...cfg,agencyName:e.target.value})} placeholder="e.g. Sunshine Security Agency" style=${{...iSt(T),fontSize:13,fontWeight:700}}/>
-      </div>
-      <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
-        <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:10}}>APPEARANCE</div>
-        <div style=${{display:'flex',gap:8}}>
-          ${['dark','light'].map(th=>html`<button key=${th} onClick=${()=>setCfg({...cfg,theme:th})} style=${{flex:1,background:cfg.theme===th?T.accS:T.bg,border:`1px solid ${cfg.theme===th?T.accB:T.bdr}`,borderRadius:11,padding:'9px 8px',cursor:'pointer',display:'flex',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
-            <${Ico} n=${th==='dark'?'moon':'sun'} s=${15} c=${cfg.theme===th?T.acc:T.sub}/>
-            <span style=${{fontSize:12,fontWeight:800,color:cfg.theme===th?T.acc:T.sub,textTransform:'capitalize'}}>${th} Mode</span>
-            ${cfg.theme===th&&html`<span style=${{fontSize:9,background:T.acc+'22',color:T.acc,borderRadius:20,padding:'1px 6px',fontWeight:800}}>ACTIVE</span>`}
-          </button>`)}
+        <div style=${{display:'flex',gap:16,flexWrap:'wrap'}}>
+          <div style=${{flex:1,minWidth:200}}>
+            <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:10}}>APPEARANCE</div>
+            <div style=${{display:'flex',gap:8}}>
+              ${['dark','light'].map(th=>html`<button key=${th} onClick=${()=>setCfg({...cfg,theme:th})} style=${{flex:1,background:cfg.theme===th?T.accS:T.bg,border:`1px solid ${cfg.theme===th?T.accB:T.bdr}`,borderRadius:11,padding:'9px 8px',cursor:'pointer',display:'flex',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
+                <${Ico} n=${th==='dark'?'moon':'sun'} s=${15} c=${cfg.theme===th?T.acc:T.sub}/>
+                <span style=${{fontSize:12,fontWeight:800,color:cfg.theme===th?T.acc:T.sub,textTransform:'capitalize'}}>${th}</span>
+              </button>`)}
+            </div>
+          </div>
+          <div style=${{width:1,background:T.bdr,alignSelf:'stretch'}}/>
+          <div style=${{flex:1,minWidth:200}}>
+            <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:10}}>REPORTS &amp; PDFs</div>
+            <div style=${{display:'flex',gap:8}}>
+              ${[['color','Coloured'],['bw','Black & White']].map(([val,lbl])=>{const active=(cfg.reportColor!==false)===(val==='color');return html`<button key=${val} onClick=${()=>pCfg({...cfg,reportColor:val==='color'})} style=${{flex:1,background:active?T.accS:T.bg,border:`1px solid ${active?T.accB:T.bdr}`,borderRadius:11,padding:'9px 8px',cursor:'pointer',display:'flex',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
+                <${Ico} n="pdf" s=${15} c=${active?T.acc:T.sub}/>
+                <span style=${{fontSize:12,fontWeight:800,color:active?T.acc:T.sub}}>${lbl}</span>
+              </button>`;})}
+            </div>
+          </div>
         </div>
       </div>
       <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
-        <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:10}}>REPORTS &amp; PDFs</div>
-        <div style=${{fontSize:11,color:T.sub,marginBottom:10}}>Choose whether downloaded PDFs (salary slips, reports, ledgers) print in color or black &amp; white.</div>
-        <div style=${{display:'flex',gap:8}}>
-          ${[['color','Coloured'],['bw','Black & White']].map(([val,lbl])=>{const active=(cfg.reportColor!==false)===(val==='color');return html`<button key=${val} onClick=${()=>pCfg({...cfg,reportColor:val==='color'})} style=${{flex:1,background:active?T.accS:T.bg,border:`1px solid ${active?T.accB:T.bdr}`,borderRadius:11,padding:'9px 8px',cursor:'pointer',display:'flex',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
-            <${Ico} n="pdf" s=${15} c=${active?T.acc:T.sub}/>
-            <span style=${{fontSize:12,fontWeight:800,color:active?T.acc:T.sub}}>${lbl}</span>
-            ${active&&html`<span style=${{fontSize:9,background:T.acc+'22',color:T.acc,borderRadius:20,padding:'1px 6px',fontWeight:800}}>ACTIVE</span>`}
-          </button>`;})}
-        </div>
+        <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:4}}>SETTINGS PASSWORD</div>
+        <div style=${{fontSize:11,color:T.sub,marginBottom:10}}>${cfg.settingsPass?'A password is required to open Settings.':'Set a password so only you can open Settings.'}</div>
+        ${cfg.settingsPass?html`<div style=${{display:'flex',flexDirection:'column',gap:8}}>
+          <div style=${{display:'flex',alignItems:'center',gap:8,background:T.grn+'14',border:`1px solid ${T.grn}33`,borderRadius:10,padding:'8px 11px'}}><${Ico} n="lock" s=${14} c=${T.grn}/><span style=${{fontSize:12,fontWeight:800,color:T.grn}}>Settings password is ON</span></div>
+          <input type="password" value=${newPass} onChange=${e=>setNewPass(e.target.value)} placeholder="New password (to change it)" style=${{...iSt(T),fontSize:13}}/>
+          <div style=${{display:'flex',gap:8}}>
+            <${Btn} T=${T} sm ch="Change" onClick=${()=>{if(!newPass.trim())return msg('Enter a new password','err');pCfg({...cfg,settingsPass:simpleHash(newPass.trim())});setNewPass('');msg('Password changed');}} style=${{flex:1}}/>
+            <button onClick=${()=>{if(!confirm('Remove Settings password?'))return;const{settingsPass,...rest}=cfg;pCfg(rest);msg('Password removed');}} style=${{flex:1,background:T.red+'14',border:`1px solid ${T.red}33`,borderRadius:12,padding:'10px 8px',cursor:'pointer',color:T.red,fontSize:12,fontWeight:800,fontFamily:'inherit'}}>Remove</button>
+          </div>
+        </div>`:html`<div style=${{display:'flex',gap:8}}>
+          <input type="password" value=${newPass} onChange=${e=>setNewPass(e.target.value)} placeholder="Set a password" style=${{...iSt(T),fontSize:13,flex:1}}/>
+          <${Btn} T=${T} ch="Set" onClick=${()=>{if(!newPass.trim())return msg('Enter a password','err');pCfg({...cfg,settingsPass:simpleHash(newPass.trim())});setNewPass('');msg('Settings password set');}}/>
+        </div>`}
       </div>
       <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:14}}>
         <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:4}}>STAFF CATEGORIES</div>
@@ -2420,11 +2656,16 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
             const cycleChipQ=key=>{const order=['none','add','subtract'];const next=order[(order.indexOf(selQ[key]||'none')+1)%3];const nsel={...selQ,[key]:next};const ns={...cfg,catChequeCustom:{...(cfg.catChequeCustom||{}),[c]:nsel}};pCfg(ns);};
             const chips=[['epfEmp','EPF Employee'],['epfPF','EPF Employer'],['eps','EPS Employer'],['esicEmp','ESIC Employee'],['esicEr','ESIC Employer']];
             const chipStyle=st2=>st2==='add'?{bg:T.grn+'1c',bd:T.grn+'55',fg:T.grn,sym:'+'}:st2==='subtract'?{bg:T.red+'14',bd:T.red+'40',fg:T.red,sym:'−'}:{bg:T.card,bd:T.bdr,fg:T.mut,sym:'○'};
-            return html`<div key=${c+i} style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:10,padding:'9px 11px'}}>
+            const isDis=(cfg.disabledCats||[]).includes(c);
+            const toggleCatEnabled=()=>{const dc=cfg.disabledCats||[];const nd=isDis?dc.filter(x=>x!==c):[...dc,c];pCfg({...cfg,disabledCats:nd});msg(isDis?c+' enabled':c+' disabled');};
+            const curCode=catCode(cfg,c);
+            const setCode=v=>{const clean=v.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4);const nm={...(cfg.catCodes||{})};if(clean)nm[c]=clean;else delete nm[c];pCfg({...cfg,catCodes:nm});};
+            return html`<div key=${c+i} style=${{background:T.bg,border:`1px solid ${isDis?T.red+'40':T.bdr}`,borderRadius:10,padding:'9px 11px',opacity:isDis?0.6:1}}>
               <div style=${{display:'flex',alignItems:'center',gap:9,marginBottom:9}}>
                 <div style=${{width:9,height:9,borderRadius:'50%',background:CC[i%CC.length],flexShrink:0}}/>
-                ${eCI===i?html`<input value=${eCV} onChange=${e=>setECV(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&saveCE()} style=${{...iSt(T),flex:1,padding:'5px 9px',fontSize:13}} autoFocus=${true}/><button onClick=${saveCE} style=${{background:T.grn+'22',border:`1px solid ${T.grn}33`,borderRadius:7,padding:'4px 9px',cursor:'pointer',color:T.grn,fontSize:12,fontWeight:800,fontFamily:'inherit'}}>Save</button><button onClick=${()=>setECI(null)} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="x" s=${14} c=${T.sub}/></button>`:html`<span style=${{flex:1,fontSize:13,fontWeight:700,color:T.txt}}>${c}</span><button onClick=${()=>{setECI(i);setECV(c);}} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="ed" s=${13} c=${T.sub}/></button><button onClick=${()=>removeCat(i)} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="tr" s=${13} c=${T.red}/></button>`}
+                ${eCI===i?html`<input value=${eCV} onChange=${e=>setECV(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&saveCE()} style=${{...iSt(T),flex:1,padding:'5px 9px',fontSize:13}} autoFocus=${true}/><button onClick=${saveCE} style=${{background:T.grn+'22',border:`1px solid ${T.grn}33`,borderRadius:7,padding:'4px 9px',cursor:'pointer',color:T.grn,fontSize:12,fontWeight:800,fontFamily:'inherit'}}>Save</button><button onClick=${()=>setECI(null)} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="x" s=${14} c=${T.sub}/></button>`:html`<span style=${{flex:1,fontSize:13,fontWeight:700,color:T.txt}}>${c}${isDis&&html`<span style=${{marginLeft:7,fontSize:9,fontWeight:800,color:T.red,background:T.red+'18',borderRadius:20,padding:'2px 7px'}}>DISABLED</span>`}</span><input value=${curCode} onChange=${e=>setCode(e.target.value)} placeholder="Code" title="Short code (e.g. LT for Teacher, LD for Driver) — shown on badges and used as this category's Employee ID prefix" style=${{...iSt(T),width:52,padding:'5px 7px',fontSize:11,fontWeight:800,textAlign:'center',textTransform:'uppercase'}}/><button onClick=${toggleCatEnabled} title=${isDis?'Enable category':'Disable category'} style=${{background:isDis?T.grn+'18':T.red+'14',border:`1px solid ${isDis?T.grn+'44':T.red+'33'}`,borderRadius:7,padding:'4px 9px',cursor:'pointer',color:isDis?T.grn:T.red,fontSize:11,fontWeight:800,fontFamily:'inherit'}}>${isDis?'Enable':'Disable'}</button><button onClick=${()=>{setECI(i);setECV(c);}} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="ed" s=${13} c=${T.sub}/></button><button onClick=${()=>removeCat(i)} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="tr" s=${13} c=${T.red}/></button>`}
               </div>
+              ${isDis&&html`<div style=${{fontSize:11,color:T.red,marginBottom:9}}>This category and its staff are hidden across the app (Dashboard, Salary, Advances, Cheques, Reports). Enable to bring them back.</div>`}
               <div style=${{fontSize:9,fontWeight:800,color:T.mut,letterSpacing:.6,marginBottom:5}}>MARGIN</div>
               <div style=${{display:'flex',flexWrap:'wrap',gap:6,marginBottom:9}}>
                 ${chips.map(([key,lbl])=>{
@@ -2447,7 +2688,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
     </div>`}
     ${sec==='staff'&&html`<div>
       <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><div style=${{fontSize:14,fontWeight:800,color:T.txt}}>${fl.length} Members${qCat!=='ALL'?' · '+qCat:''}</div><${Btn} T=${T} sm ch=${html`<span style=${{display:'flex',alignItems:'center',gap:5}}><${Ico} n="plus" s=${14} c="#fff"/>Add</span>`} onClick=${openAdd}/></div>
-      <div style=${{display:'flex',gap:6,marginBottom:12,overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:2}}>
+      <div style=${{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12,maxHeight:66,overflowY:'auto'}}>
         ${[{k:'ALL',l:'All'},...cats.map(c=>({k:c,l:c}))].map(({k,l})=>{
           const cnt=k==='ALL'?staff.length:staff.filter(s=>s.role===k).length;
           const ac=qCat===k;
@@ -2463,8 +2704,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
       ${fl.map(s=>{const pA=adv.filter(a=>a.staffId===s.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);const cc=catC(s.role);return html`<div key=${s.id} style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:13,padding:12,marginBottom:9}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
           <div style=${{flex:1,minWidth:0}}>
-            <div style=${{display:'flex',alignItems:'center',gap:8,marginBottom:5}}><div style=${{width:34,height:34,background:cc+'22',border:`1.5px solid ${cc}44`,borderRadius:9,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:900,color:cc,flexShrink:0}}>${s.name[0]}</div><div><div style=${{fontSize:14,fontWeight:800,color:T.txt}}>${s.name}</div><${Badge} role=${s.role} T=${T} cats=${cats}/></div></div>
-            ${s.client&&html`<div style=${{background:T.blu+'14',border:`1px solid ${T.blu}22`,borderRadius:7,padding:'3px 8px',marginBottom:4,display:'inline-flex',alignItems:'center',gap:4}}><${Ico} n="bld" s=${10} c=${T.blu}/><span style=${{fontSize:11,color:T.blu,fontWeight:700}}>${s.client}</span></div>`}
+            <div style=${{display:'flex',alignItems:'center',gap:8,marginBottom:5}}><div style=${{width:34,height:34,background:cc+'22',border:`1.5px solid ${cc}44`,borderRadius:9,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:900,color:cc,flexShrink:0}}>${s.name[0]}</div><div><div style=${{display:'flex',alignItems:'center',gap:6}}><div style=${{fontSize:14,fontWeight:800,color:T.txt}}>${s.name}</div>${s.empId&&html`<span style=${{fontSize:9,fontWeight:800,color:T.sub,background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:20,padding:'1px 7px',fontFamily:"'Inter'"}}>${s.empId}</span>`}</div><${Badge} role=${s.role} T=${T} cats=${cats} cfg=${cfg}/></div></div>
             ${(pA+pC)>0&&html`<div style=${{fontSize:11,color:T.red,fontWeight:700}}>⚠ Owes ${fR(pA+pC)}</div>`}
             <div style=${{marginTop:5,display:'flex',alignItems:'center',gap:6}}>
               <button onClick=${()=>{const updated=staff.map(x=>x.id===s.id?{...x,inReport:!(x.inReport!==false)}:x);setStaff(updated);sv(K.staff,updated);}} style=${{display:'flex',alignItems:'center',gap:5,background:s.inReport!==false?T.grn+'18':T.bdr,border:`1px solid ${s.inReport!==false?T.grn+'44':T.bdr2}`,borderRadius:20,padding:'3px 9px',cursor:'pointer',fontSize:10,fontWeight:800,color:s.inReport!==false?T.grn:T.mut,fontFamily:'inherit'}}>
@@ -2508,7 +2748,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
       const epsWageCeil=st.epsWageCeil??15000;
       const esicEmp=st.esicEmp??0.75, esicEr=st.esicEr??3.25;
       const esicWageLim=st.esicWageLim??21000;
-      const save=(key,val)=>{const ns={...cfg,statutory:{...st,[key]:Number(val)}};setCfg(ns);};
+      const save=(key,val)=>{pCfg({...cfg,statutory:{...st,[key]:Number(val)}});};
       const inpSt={background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:9,padding:'9px 32px 9px 11px',color:T.txt,fontSize:14,fontWeight:800,width:'100%',fontFamily:"'Inter'"};
       const inpStNoR={...inpSt,padding:'9px 11px'};
       return html`<div style=${{display:'flex',flexDirection:'column',gap:14}}>
@@ -2575,7 +2815,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
               <div style=${{fontSize:11,fontWeight:800,color:T.blu,letterSpacing:.8,marginBottom:3}}>ROUND OFF CHEQUE AMOUNT</div>
               <div style=${{fontSize:11,color:T.sub}}>Rounds Cheque Amount to nearest ₹5 (e.g. ₹14,079 → ₹14,080)</div>
             </div>
-            <button onClick=${()=>{const ns={...cfg,statutory:{...st,roundOff10:!st.roundOff10}};setCfg(ns);}} style=${{flexShrink:0,width:44,height:26,borderRadius:20,border:'none',cursor:'pointer',background:st.roundOff10?T.grn:T.bdr2,position:'relative',transition:'background .15s'}}>
+            <button onClick=${()=>{pCfg({...cfg,statutory:{...st,roundOff10:!st.roundOff10}});}} style=${{flexShrink:0,width:44,height:26,borderRadius:20,border:'none',cursor:'pointer',background:st.roundOff10?T.grn:T.bdr2,position:'relative',transition:'background .15s'}}>
               <span style=${{position:'absolute',top:3,left:st.roundOff10?21:3,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left .15s'}}/>
             </button>
           </div>
@@ -2751,6 +2991,39 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
         <${SyncSec} cfg=${cfg} setCfg=${setCfg} fbSt=${fbSt} setFbSt=${setFbSt} T=${T} msg=${msg}/>
       </div>`;
     })()}
+    ${sec==='devices'&&(()=>{
+      const devIds=Object.keys(allDevices||{});
+      if(fbSt!=='connected')return html`<div style=${{background:T.card,border:'1px solid '+T.bdr,borderRadius:14,padding:20,textAlign:'center'}}>
+        <${Ico} n="lock" s=${22} c=${T.mut}/>
+        <div style=${{fontSize:13,fontWeight:800,color:T.txt,marginTop:8}}>Connect Firebase first</div>
+        <div style=${{fontSize:12,color:T.sub,marginTop:4}}>Per-device page control needs Cloud Sync to be connected (see Backup & Sync) — it's how one device can control what another device sees.</div>
+      </div>`;
+      return html`<div style=${{display:'flex',flexDirection:'column',gap:12}}>
+        <div style=${{fontSize:11,color:T.sub,lineHeight:1.5}}>Every device that opens this app registers itself here. From any one device, turn specific pages or staff categories ON/OFF for any other device — it applies live, no need to touch that device.</div>
+        ${devIds.length===0&&html`<div style=${{background:T.card,border:'1px solid '+T.bdr,borderRadius:14,padding:16,textAlign:'center',fontSize:12,color:T.sub}}>No other devices registered yet.</div>`}
+        ${devIds.sort((a,b)=>(allDevices[b]?.lastSeen||0)-(allDevices[a]?.lastSeen||0)).map(id=>{
+          const dev=allDevices[id]||{};const perms={...DEF_PERMS,...(dev.pages||{})};const catPerms=dev.cats||{};const isMe=id===myDeviceId;
+          return html`<div key=${id} style=${{background:T.bg,border:'1px solid '+(isMe?T.accB:T.bdr),borderRadius:12,padding:'10px 12px'}}>
+            <div style=${{display:'flex',alignItems:'center',gap:8,marginBottom:9}}>
+              <${Ico} n="ppl" s=${13} c=${isMe?T.acc:T.sub}/>
+              <input value=${dev.name||''} onChange=${e=>renameDevice(id,e.target.value)} placeholder="Unnamed device" style=${{...iSt(T),flex:1,padding:'5px 9px',fontSize:12.5,fontWeight:700}}/>
+              ${isMe&&html`<span style=${{fontSize:9,fontWeight:800,color:T.acc,background:T.acc+'18',borderRadius:20,padding:'2px 7px',flexShrink:0}}>THIS DEVICE</span>`}
+              <button onClick=${()=>{if(confirm('Remove "'+(dev.name||'this device')+'"? It will re-register with default (all-enabled) access if it opens the app again.'))removeDevice(id);}} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex',flexShrink:0}}><${Ico} n="tr" s=${13} c=${T.red}/></button>
+            </div>
+            <div style=${{display:'flex',flexWrap:'wrap',gap:6}}>
+              ${PAGE_KEYS.map(pk=>{const on=perms[pk.k]!==false;return html`<button key=${pk.k} onClick=${()=>setDevicePage(id,pk.k,!on)} style=${{display:'flex',alignItems:'center',gap:5,background:on?T.grn+'1c':T.red+'14',border:'1px solid '+(on?T.grn+'55':T.red+'40'),borderRadius:20,padding:'6px 11px',cursor:'pointer',fontSize:11,fontWeight:800,color:on?T.grn:T.red,fontFamily:'inherit'}}><span style=${{fontSize:13,lineHeight:1}}>${on?'✓':'✕'}</span>${pk.l}</button>`;})}
+            </div>
+            ${cats.length>0&&html`<div style=${{marginTop:9,paddingTop:9,borderTop:'1px solid '+T.bdr}}>
+              <div style=${{fontSize:9,fontWeight:800,color:T.mut,letterSpacing:.6,marginBottom:6}}>STAFF CATEGORIES</div>
+              <div style=${{display:'flex',flexWrap:'wrap',gap:6}}>
+                ${cats.map(c=>{const on=catPerms[c]!==false;return html`<button key=${c} onClick=${()=>setDeviceCat(id,c,!on)} style=${{display:'flex',alignItems:'center',gap:5,background:on?T.grn+'1c':T.red+'14',border:'1px solid '+(on?T.grn+'55':T.red+'40'),borderRadius:20,padding:'6px 11px',cursor:'pointer',fontSize:11,fontWeight:800,color:on?T.grn:T.red,fontFamily:'inherit'}}><span style=${{fontSize:13,lineHeight:1}}>${on?'✓':'✕'}</span>${c}</button>`;})}
+              </div>
+            </div>`}
+            ${dev.lastSeen&&html`<div style=${{fontSize:10,color:T.mut,marginTop:8}}>Last seen: ${new Date(dev.lastSeen).toLocaleString()}</div>`}
+          </div>`;
+        })}
+      </div>`;
+    })()}
     ${sec==='danger'&&(()=>{
       const staffSel=staff.find(s=>s.id===delStaffId);
       const sName=staffSel?staffSel.name:'';
@@ -2806,7 +3079,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
                 <input type="checkbox" checked=${delIds.has(s.id)} onChange=${()=>toggleId(s.id)} style=${{width:16,height:16}}/>
                 <div style=${{flex:1}}>
                   <span style=${{fontSize:13,fontWeight:700,color:T.txt}}>${s.name}</span>
-                  <span style=${{fontSize:11,color:T.sub,marginLeft:6}}>${s.role}${s.client?' @ '+s.client:''}</span>
+                  <span style=${{fontSize:11,color:T.sub,marginLeft:6}}>${s.role}</span>
                 </div>
                 <span style=${{fontSize:10,color:T.mut}}>
                   ${sal.filter(x=>x.sid===s.id).length}s · ${adv.filter(x=>x.staffId===s.id).length}a · ${chq.filter(x=>x.staffId===s.id).length}c
@@ -2879,7 +3152,7 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
                 <input type="checkbox" checked=${delStaffIds.has(s.id)} onChange=${()=>toggleStaffDelId(s.id)} style=${{width:16,height:16}}/>
                 <div style=${{flex:1}}>
                   <span style=${{fontSize:13,fontWeight:700,color:T.txt}}>${s.name}</span>
-                  <span style=${{fontSize:11,color:T.sub,marginLeft:6}}>${s.role}${s.client?' @ '+s.client:''}</span>
+                  <span style=${{fontSize:11,color:T.sub,marginLeft:6}}>${s.role}</span>
                 </div>
                 <span style=${{fontSize:10,color:T.mut}}>
                   ${sal.filter(x=>x.sid===s.id).length}s · ${adv.filter(x=>x.staffId===s.id).length}a · ${chq.filter(x=>x.staffId===s.id).length}c
@@ -2916,19 +3189,21 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
       </div>`;
     })()}
     ${showF&&(()=>{
-      const exC=[...new Set(staff.filter(s=>s.id!==editId&&s.client).map(s=>s.client))];const dlId='cdl'+uid();
+      const empIdPreview=nextEmpIdFor(cfg,form.role).empId;
       return html`<${Mdl} title=${editId?'Edit Staff':'Add Staff'} onClose=${()=>setShowF(false)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:13}}>
-        <${Inp} T=${T} label="Full Name *" value=${form.name} onChange=${e=>setForm({...form,name:e.target.value})} placeholder="e.g. Ramesh Kumar"/>
-        <${Sel} T=${T} label="Role *" value=${form.role} onChange=${e=>setForm({...form,role:e.target.value})} options=${cats.map(c=>({value:c,label:c}))}/>
-        <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:12,padding:12,display:'flex',flexDirection:'column',gap:12}}>
-          <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8}}>SALARY & CLIENT</div>
-          <${Inp} T=${T} label="Monthly Salary (₹) *" type="number" value=${form.mRate} onChange=${e=>setForm({...form,mRate:e.target.value})} placeholder="What you pay"/>
-          <div style=${{display:'flex',flexDirection:'column',gap:5}}>
-            <label style=${{fontSize:11,color:T.sub,fontWeight:800}}>Punched At (Client)</label>
-            <datalist id=${dlId}>${exC.map(c=>html`<option key=${c} value=${c}/>`)}</datalist>
-            <input list=${dlId} value=${form.client} onChange=${e=>setForm({...form,client:e.target.value})} placeholder=${exC.length>0?'Select or type…':'e.g. ABC Pvt. Ltd.'} style=${iSt(T)} onFocus=${e=>e.target.style.borderColor=T.acc} onBlur=${e=>e.target.style.borderColor=T.bdr}/>
-            ${exC.length>0&&html`<div style=${{display:'flex',gap:6,flexWrap:'wrap',marginTop:2}}>${exC.map(c=>html`<button key=${c} onClick=${()=>setForm({...form,client:c})} style=${{background:form.client===c?T.accS:T.card,border:`1px solid ${form.client===c?T.accB:T.bdr}`,color:form.client===c?T.acc:T.sub,borderRadius:20,padding:'4px 11px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>${c}</button>`)}</div>`}
+        <div style=${{display:'flex',alignItems:'center',gap:8,background:T.accS,border:`1px solid ${T.accB}`,borderRadius:10,padding:'8px 11px'}}>
+          <${Ico} n="id" s=${14} c=${T.acc}/>
+          <div style=${{flex:1,minWidth:0}}>
+            <div style=${{fontSize:9,fontWeight:800,color:T.sub,letterSpacing:.6,marginBottom:2}}>EMPLOYEE ID</div>
+            <input value=${form.empId} onChange=${e=>setForm({...form,empId:e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'')})} placeholder=${empIdPreview} style=${{background:'transparent',border:'none',outline:'none',padding:0,fontSize:13,fontWeight:900,color:T.acc,fontFamily:"'Inter'",width:'100%'}}/>
           </div>
+        </div>
+        <div style=${{fontSize:10,color:T.mut,marginTop:-8}}>Leave blank to auto-assign ${empIdPreview}</div>
+        <${Inp} T=${T} label="Full Name *" value=${form.name} onChange=${e=>setForm({...form,name:e.target.value})} placeholder="e.g. Ramesh Kumar"/>
+        <${Sel} T=${T} label="Role *" value=${form.role} onChange=${e=>setForm({...form,role:e.target.value})} options=${cats.filter(c=>!(cfg.disabledCats||[]).includes(c)||c===form.role).map(c=>({value:c,label:c+((cfg.disabledCats||[]).includes(c)?' (Disabled)':'')}))}/>
+        <div style=${{background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:12,padding:12,display:'flex',flexDirection:'column',gap:12}}>
+          <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8}}>SALARY</div>
+          <${Inp} T=${T} label="Monthly Salary (₹) *" type="number" value=${form.mRate} onChange=${e=>setForm({...form,mRate:e.target.value})} placeholder="What you pay"/>
           <${Inp} T=${T} label="Pay as per Record (₹)" type="number" value=${form.recPay} onChange=${e=>setForm({...form,recPay:e.target.value})} placeholder="Statutory/record salary"/>
           ${form.recPay&&html`<div style=${{background:T.blu+'14',borderRadius:8,padding:'6px 10px',fontSize:12,color:T.blu,fontWeight:800}}>Cheque Amount (Record ${selLabel(form.role,cfg,DEF_CHEQUE_SEL,'catChequeCustom')}): ${fR(chequeAmt(form.recPay,cfg,form.role))}/mo</div>`}
           ${form.mRate&&form.recPay&&(()=>{
