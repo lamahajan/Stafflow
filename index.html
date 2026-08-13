@@ -2588,6 +2588,28 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
   const doDeleteStaffBulk=()=>{const ids=[...delStaffIds];setStaff(staff.filter(s=>!ids.includes(s.id)));setSal(sal.filter(s=>!ids.includes(s.sid)));setAdv(adv.filter(a=>!ids.includes(a.staffId)));setChq(chq.filter(c=>!ids.includes(c.staffId)));setDelStaffIds(new Set());setDelConfirm(false);msg(ids.length+' staff and all their records deleted');};
   const clearAll=()=>{setStaff([]);setSal([]);setAdv([]);setChq([]);setCats(DEF_CATS);setCfg({theme:cfg.theme,fys:[],activeFY:null,fbcfg:cfg.fbcfg});setDelConfirm(false);msg('All data cleared');};
   const fl=staff.filter(s=>(qCat==='ALL'||s.role===qCat)&&[s.name,s.role,s.client||'',s.empId||''].join(' ').toLowerCase().includes(q.toLowerCase()));
+  // Renumbers EVERY staff member's Employee ID from scratch using their category's CURRENT Code —
+  // groups by role, keeps each group's existing relative order (by current empId, else join date,
+  // else name) so reassigning doesn't shuffle who's "first", then restarts each prefix's counter at 1.
+  const reassignAllEmpIds=()=>{
+    if(!staff.length)return msg('No staff to reassign','err');
+    if(!confirm('Reassign Employee IDs for all '+staff.length+' staff using each category\'s current Code? Existing IDs will be replaced. This cannot be undone.'))return;
+    const byRole={};
+    staff.forEach(s=>{(byRole[s.role]=byRole[s.role]||[]).push(s);});
+    const counters={};const idMap={};
+    Object.keys(byRole).forEach(role=>{
+      const list=[...byRole[role]].sort((a,b)=>{
+        if(a.empId&&b.empId)return a.empId.localeCompare(b.empId,undefined,{numeric:true});
+        if(a.empId)return -1;if(b.empId)return 1;
+        return(a.join||'').localeCompare(b.join||'')||(a.name||'').localeCompare(b.name||'');
+      });
+      const prefix=catCode(cfg,role)||'LIS';
+      list.forEach(s=>{counters[prefix]=(counters[prefix]||0)+1;idMap[s.id]=empIdStr(counters[prefix],prefix);});
+    });
+    setStaff(staff.map(s=>({...s,empId:idMap[s.id]})));
+    pCfg({...cfg,empIdCounters:{...(cfg.empIdCounters||{}),...counters}});
+    msg('✅ Reassigned Employee IDs for '+staff.length+' staff');
+  };
   const SEC_GROUPS=[
     {g:'General',items:[{k:'general',l:'General',n:'sun'}]},
     {g:'Staff',items:[{k:'staff',l:'Staff',n:'ppl'}]},
@@ -2985,6 +3007,13 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
           <div style=${{fontSize:12,color:T.sub,marginBottom:10,lineHeight:1.5}}>Import a previously exported JSON file. A category export will be merged; a full backup will replace all data.</div>
           <button onClick=${importCategoryJSON} style=${{width:'100%',background:T.grn,color:'#fff',border:'none',borderRadius:10,padding:'11px',fontSize:13,fontWeight:800,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:7}}>
             <${Ico} n="up" s=${16} c="#fff"/> Import JSON File
+          </button>
+        </div>
+        <div style=${{background:T.card,border:'1px solid '+T.bdr,borderRadius:14,padding:14}}>
+          <div style=${{fontSize:11,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:12}}>🔄 REASSIGN EMPLOYEE IDS</div>
+          <div style=${{fontSize:12,color:T.sub,marginBottom:12,lineHeight:1.5}}>Employee IDs are only auto-generated once, when a staff member is added — changing a category's Code later in Staff Categories won't update IDs already assigned. Use this to renumber every staff member's ID from scratch using each category's current Code (order within a category is preserved).</div>
+          <button onClick=${reassignAllEmpIds} style=${{width:'100%',background:T.yel,color:'#fff',border:'none',borderRadius:10,padding:'11px',fontSize:13,fontWeight:800,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:7}}>
+            <${Ico} n="id" s=${16} c="#fff"/> Reassign All Employee IDs
           </button>
         </div>
         <div style=${{marginTop:4,marginBottom:-2,fontSize:9.5,fontWeight:900,color:T.mut,letterSpacing:1,paddingLeft:2}}>CLOUD SYNC & FULL BACKUP</div>
