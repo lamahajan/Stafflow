@@ -1979,6 +1979,39 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   </div>`;
 }
 // ── Advances PDF ─────────────────────────────────────────────────────────────
+// Groups every section (pending / recovered) person-wise: all of a staff member's
+// advances sit together as consecutive rows, followed by a bold subtotal row for
+// that person, before moving to the next staff member (sorted alphabetically).
+function groupAdvRowsByStaff(list,staff,withDedOn){
+  const groups=new Map();
+  list.forEach(a=>{
+    const key=a.staffId||'—';
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(a);
+  });
+  const keys=[...groups.keys()].sort((k1,k2)=>{
+    const n1=staff.find(x=>x.id===k1)?.name||'';
+    const n2=staff.find(x=>x.id===k2)?.name||'';
+    return n1.localeCompare(n2);
+  });
+  const rows=[],subtotalRows=[];
+  let sr=1;
+  keys.forEach(key=>{
+    const s=staff.find(x=>x.id===key);
+    const items=groups.get(key);
+    let sub=0;
+    items.forEach(a=>{
+      sub+=Number(a.amount);
+      rows.push(withDedOn
+        ?[sr++,s?.name||'—',s?.role||'—',a.date,a.note||'General Advance',fRp(a.amount),a.dedOn||'—']
+        :[sr++,s?.name||'—',s?.role||'—',a.date,a.note||'General Advance',fRp(a.amount)]);
+    });
+    subtotalRows.push(rows.length);
+    const stLabel=(s?.name||'—')+' — Subtotal ('+items.length+(items.length===1?' entry)':' entries)');
+    rows.push(withDedOn?['',stLabel,'','','',fRp(sub),'']:['',stLabel,'','','',fRp(sub)]);
+  });
+  return{rows,subtotalRows};
+}
 async function genAdvancesPDF(adv,staff,cats,filterCat,msgFn,cfg){
   try{
     msgFn('Generating advances PDF…');
@@ -1996,21 +2029,25 @@ async function genAdvancesPDF(adv,staff,cats,filterCat,msgFn,cfg){
     const rAmt=recovered.reduce((s,a)=>s+Number(a.amount),0);
     y=summBox(doc,[['Pending',fRp(pAmt),AMB],['Recovered',fRp(rAmt),GRN_],['Total Records',String(filtered.length),PRP]],y);
     if(pending.length){
-      y=secHead(doc,'Pending Advances ('+pending.length+')',y);
+      y=secHead(doc,'Pending Advances ('+pending.length+') — Grouped by Staff',y);
+      const{rows,subtotalRows}=groupAdvRowsByStaff(pending,staff,false);
       doc.autoTable({startY:y,head:[['Sr.','Staff Name','Role','Date','Note','Amount (₹)']],
-        body:pending.map((a,i)=>{const s=staff.find(x=>x.id===a.staffId);return[i+1,s?.name||'—',s?.role||'—',a.date,a.note||'General Advance',fRp(a.amount)];}),
+        body:rows,
         styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},
         columnStyles:{0:{cellWidth:8,halign:'center'},5:{halign:'right'}},
-        foot:[['','','','','TOTAL',fRp(pAmt)]],footStyles:{...TF}});
+        foot:[['','','','','TOTAL',fRp(pAmt)]],footStyles:{...TF},
+        didParseCell:d=>{if(d.section==='body'&&subtotalRows.includes(d.row.index)){d.cell.styles.fillColor=MID;d.cell.styles.textColor=BLK;d.cell.styles.fontStyle='bold';}}});
       y=doc.lastAutoTable.finalY+8;}
     if(recovered.length){
       if(y>230){doc.addPage();pdfPage(doc,'CASH ADVANCES',label,[],1,1);y=35;}
-      y=secHead(doc,'Recovered Advances ('+recovered.length+')',y);
+      y=secHead(doc,'Recovered Advances ('+recovered.length+') — Grouped by Staff',y);
+      const{rows,subtotalRows}=groupAdvRowsByStaff(recovered,staff,true);
       doc.autoTable({startY:y,head:[['Sr.','Staff Name','Role','Date','Note','Amount (₹)','Deducted On']],
-        body:recovered.map((a,i)=>{const s=staff.find(x=>x.id===a.staffId);return[i+1,s?.name||'—',s?.role||'—',a.date,a.note||'General Advance',fRp(a.amount),a.dedOn||'—'];}),
+        body:rows,
         styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},
         columnStyles:{0:{cellWidth:8,halign:'center'},5:{halign:'right'},6:{halign:'center',cellWidth:22}},
-        foot:[['','','','','TOTAL',fRp(rAmt),'']],footStyles:{...TF}});}
+        foot:[['','','','','TOTAL',fRp(rAmt),'']],footStyles:{...TF},
+        didParseCell:d=>{if(d.section==='body'&&subtotalRows.includes(d.row.index)){d.cell.styles.fillColor=MID;d.cell.styles.textColor=BLK;d.cell.styles.fontStyle='bold';}}});}
     const pg=doc.internal.getNumberOfPages();for(let i=1;i<=pg;i++){doc.setPage(i);pdfPage(doc,'CASH ADVANCES',label,['Category: '+(filterCat==='ALL'?'All':filterCat),'Records: '+filtered.length,'Generated: '+ds,'Pending: '+fRp(pAmt)],i,pg);}
     doc.save('StaffFlow_Advances_'+(filterCat==='ALL'?'All':filterCat).replace(/\s+/g,'_')+'_'+new Date().toISOString().slice(0,10)+'.pdf');
     msgFn('Advances PDF downloaded ✓');}catch(e){console.error(e);msgFn('PDF failed','err');}
