@@ -354,6 +354,9 @@ const Ico=({n,s=20,c='currentColor'})=>{
 };
 const iSt=T=>({background:T.inBg,border:`1px solid ${T.bdr}`,borderRadius:14,color:T.txt,padding:'11px 14px',fontSize:14,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit'});
 const catCode=(cfg,role)=>((cfg&&cfg.catCodes)||{})[role]||'';
+// Free (unpaid-but-not-deducted) leaves allowed per month for a category — e.g. 1 casual leave/month
+// that shouldn't reduce pay. Stored per-category in cfg.catFreeLeaves = {categoryName: number}.
+const freeLeaveOf=(cfg,role)=>Number(((cfg&&cfg.catFreeLeaves)||{})[role])||0;
 // Auto-generates a category Code: always starts with 'L', then the category name's first letter;
 // if that pair is already taken by another category, tries the name's 2nd letter, 3rd, etc.
 // Falls back to L + first letter + a number if the whole name is exhausted. Purely a default —
@@ -1401,12 +1404,20 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   const[advCutMap,setAdvCutMap]=useState({});
   const[selCat,setSelCat]=useState('ALL');
   const[processing,setProcessing]=useState(false);
-  // Load attendance data
-  const[attData,setAttData]=useState({});
-  useState(()=>{ld('sf8_att').then(d=>{setAttData(d&&d[yr+'_'+mon]?d[yr+'_'+mon]:{});});});
-  // Re-load when month changes
-  const prevMon=useState(mon)[0];
-  useEffect(()=>{ld('sf8_att').then(d=>{setAttData(d&&d[yr+'_'+mon]?d[yr+'_'+mon]:{});});},[mon,yr]);
+  // Load attendance data — live-subscribed to Firebase (when connected) so day-offs marked on
+  // another device show up here immediately, instead of only after a manual reload/month switch.
+  const[attRaw,setAttRaw]=useState({});
+  useEffect(()=>{
+    let cancelled=false;
+    if(_db){
+      const ref=_db.ref('sf8/sf8_att');
+      const cb=sn=>{if(!cancelled)setAttRaw(sn.val()||{});};
+      ref.on('value',cb);
+      return()=>{cancelled=true;ref.off('value',cb);};
+    }
+    ld('sf8_att').then(d=>{if(!cancelled)setAttRaw(d||{});});
+  },[]);
+  const attData=attRaw&&attRaw[yr+'_'+mon]?attRaw[yr+'_'+mon]:{};
   const monSal=sal.filter(s=>s.mon===mon&&s.yr===yr);
   const processed=new Set(monSal.map(s=>s.sid));
   const unprocessed=staff.filter(s=>!processed.has(s.id)&&(selCat==='ALL'||s.role===selCat));
@@ -1416,7 +1427,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   const getCp=(id,s)=>{ const v=cpMap[id]; if(v!==undefined)return parseFloat(v)||0; return chequeAmt(s.recPay,cfg,s.role); };
   const recMargin=(s,cfg)=>roundAmt((Number(s.cp)||0)-Number(s.net||0)+marginAddOn(s.role,{epfEmp:s.epfEmpAmt,epfPF:s.epfPFAmt,eps:s.epsAmt,esicEmp:s.esicEmpAmt,esicEr:s.esicErAmt},cfg),cfg.statutory);
   const calcSal=(s,absV,cpV)=>{
-    const pDay=Number(s.mRate)/FD, ab=Math.max(0,absV);
+    const pDay=Number(s.mRate)/FD, rawAb=Math.max(0,absV), freeLv=freeLeaveOf(cfg,s.role), ab=Math.max(0,rawAb-freeLv);
     const wd=FD, proBase=pDay*wd, absDed=pDay*Math.min(ab,wd);
     // Deduction is now fully auto-calculated from statutory rates, based on Pay as per Record — no manual entry
     const st=cfg.statutory||{};
@@ -1446,7 +1457,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const advAmt=cutV!==undefined&&cutV!==''?Math.min(Math.max(0,parseFloat(cutV)||0),gross):Math.min(totalPending,gross);
     const net=Math.max(0,gross-advAmt);
     const cpN=cpV; const margin=roundAmt(cpN-gross+marginAddOn(s.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg)+advAmt,cfg.statutory);
-    return{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,totalPending,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
+    return{pDay,gross,advAmt,net,mDedAmt,absDed,cpN,margin,pA,pC,totalPending,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt,freeLv,rawAb};
   };
   const processOne=async(s)=>{
     const absV=getAbs(s.id), cpV=getCp(s.id,s);
@@ -1561,6 +1572,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
                   style=${{width:28,height:28,background:T.acc+'18',border:'1px solid '+T.acc+'44',borderRadius:7,color:T.acc,cursor:'pointer',fontFamily:'inherit',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:900}}>+</button>
               </div>
               ${getAbs(s.id)>0&&html`<div style=${{fontSize:9,color:T.red,marginTop:2,fontFamily:AD,fontWeight:800}}>−${fR(calcSal(s,getAbs(s.id),getCp(s.id,s)).absDed)}</div>`}
+              ${freeLeaveOf(cfg,s.role)>0&&html`<div style=${{fontSize:9,color:T.grn,marginTop:2,fontFamily:AD}}>✓ ${freeLeaveOf(cfg,s.role)} free/mo</div>`}
               ${attData[s.id]!==undefined&&html`<div style=${{fontSize:9,color:T.acc,marginTop:2,fontFamily:AD}}>📋 auto-filled</div>`}
             </div>
             <!-- Client payment -->
@@ -1646,12 +1658,24 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   const mon=fyM[selIdx].value,yr=fyM[selIdx].yr;
   const[proc,setProc]=useState(null),[viewS,setViewS]=useState(null),[qS,setQS]=useState('');
   const[abs,setAbs]=useState('0'),[advD,setAdvD]=useState('0'),[cpV,setCpV]=useState(''),[note,setNote]=useState('');
-  const[attData,setAttData]=useState({});
+  const[attRaw,setAttRaw]=useState({});
   const[absMap,setAbsMap]=useState({});
   const[joinWD,setJoinWD]=useState(null);
   const[leftWD,setLeftWD]=useState(null);
   const[selCat,setSelCat]=useState('ALL');
-  useEffect(()=>{ld('sf8_att').then(d=>{setAttData(d&&d[yr+'_'+mon]?d[yr+'_'+mon]:{});});},[mon,yr]);
+  // Live-subscribed to Firebase (when connected) so day-offs marked on another device show up
+  // immediately here too, instead of only after a manual reload/month switch.
+  useEffect(()=>{
+    let cancelled=false;
+    if(_db){
+      const ref=_db.ref('sf8/sf8_att');
+      const cb=sn=>{if(!cancelled)setAttRaw(sn.val()||{});};
+      ref.on('value',cb);
+      return()=>{cancelled=true;ref.off('value',cb);};
+    }
+    ld('sf8_att').then(d=>{if(!cancelled)setAttRaw(d||{});});
+  },[]);
+  const attData=attRaw&&attRaw[yr+'_'+mon]?attRaw[yr+'_'+mon]:{};
   const monSal=sal.filter(s=>s.mon===mon&&s.yr===yr);
   const recMargin=(s,cfg)=>roundAmt((Number(s.cp)||0)-Number(s.net||0)+marginAddOn(s.role,{epfEmp:s.epfEmpAmt,epfPF:s.epfPFAmt,eps:s.epsAmt,esicEmp:s.esicEmpAmt,esicEr:s.esicErAmt},cfg),cfg.statutory);
   // Staff who quit before this processing month started have nothing left to pay — drop them from
@@ -1690,7 +1714,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const pC=chq.filter(c=>c.staffId===s.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);
     setAdvD(String(pA+pC));setCpV(chequeAmt(s.recPay,cfg,s.role)||'');};
   const calc=(s,a,d2,wd)=>{
-    const ab=Math.max(0,parseFloat(a)||0),pDay=Number(s.mRate)/FD;
+    const rawAb=Math.max(0,parseFloat(a)||0),freeLv=freeLeaveOf(cfg,s.role),ab=Math.max(0,rawAb-freeLv),pDay=Number(s.mRate)/FD;
     const effDays=wd||FD;
     const proBase=pDay*effDays;
     const absDed=pDay*Math.min(ab,effDays);
@@ -1717,7 +1741,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     const gross=Math.max(0,proBase-absDed);
     const advAmt=Math.min(Math.max(0,Number(d2)||0),gross);
     const net=Math.max(0,gross-advAmt);
-    return{pDay,absDed,gross,advAmt,net,proBase,effDays,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt};
+    return{pDay,absDed,gross,advAmt,net,proBase,effDays,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt,freeLv,rawAb};
   };
   const activeWD=leftWD||joinWD;
   const process=()=>{
@@ -1855,7 +1879,7 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     ${proc&&(()=>{
       const pL=adv.filter(a=>a.staffId===proc.id&&a.status==='pending'),pCL=chq.filter(c=>c.staffId===proc.id&&c.status==='pending');
       const tPA=pL.reduce((s,a)=>s+Number(a.amount),0),tPC=pCL.reduce((s,c)=>s+Number(c.expected||c.ret),0);
-      const{pDay,absDed,gross,advAmt,net,proBase,effDays,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calc(proc,abs,advD,activeWD);const cpN=Number(cpV)||0;
+      const{pDay,absDed,gross,advAmt,net,proBase,effDays,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt,freeLv,rawAb}=calc(proc,abs,advD,activeWD);const cpN=Number(cpV)||0;
       const margin=roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg)+advAmt,cfg.statutory);
       const isProRata=activeWD!==null;
       const proRataReason=leftWD?'left':'join';
@@ -1869,14 +1893,14 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
               <div style=${{fontSize:11,color:T.sub,marginTop:2}}>${proRataReason==='left'?`Left on ${new Date(proc.leftDate).toLocaleDateString('en-IN',{day:'numeric',month:'short'})} · ${leftWD} days salary (out of 30)`:`Joined ${new Date(proc.join).toLocaleDateString('en-IN',{day:'numeric',month:'short'})} · ${joinWD} days salary (out of 30)`}</div>
             </div>
           </div>`}
-          <div style=${{background:T.bg,border:`1px solid ${T.acc}30`,borderRadius:12,padding:12}}><div style=${{fontSize:10,fontWeight:800,color:T.acc,marginBottom:9}}>1 · ATTENDANCE</div><${Inp} T=${T} label=${isProRata?`Absent Days (of ${activeWD} working days)`:'Absent Days (of 30)'} type="number" step="0.5" value=${abs} onChange=${e=>setAbs(e.target.value)} placeholder="0"/>${attData[proc?.id]!==undefined&&html`<div style=${{marginTop:7,background:T.acc+'14',borderRadius:8,padding:'6px 11px',fontSize:11,color:T.acc,fontWeight:700}}>📋 Supervisor attendance auto-filled</div>`}${(parseFloat(abs)||0)>0&&html`<div style=${{marginTop:8,background:T.red+'14',borderRadius:8,padding:'7px 10px',display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:12,color:T.sub}}>${parseFloat(abs)}d × ${fR(Math.round(pDay))}</span><span style=${{fontSize:12,fontWeight:800,color:T.red}}>−${fR(absDed.toFixed(2))}</span></div>`}</div>
+          <div style=${{background:T.bg,border:`1px solid ${T.acc}30`,borderRadius:12,padding:12}}><div style=${{fontSize:10,fontWeight:800,color:T.acc,marginBottom:9}}>1 · ATTENDANCE</div><${Inp} T=${T} label=${isProRata?`Absent Days (of ${activeWD} working days)`:'Absent Days (of 30)'} type="number" step="0.5" value=${abs} onChange=${e=>setAbs(e.target.value)} placeholder="0"/>${attData[proc?.id]!==undefined&&html`<div style=${{marginTop:7,background:T.acc+'14',borderRadius:8,padding:'6px 11px',fontSize:11,color:T.acc,fontWeight:700}}>📋 Supervisor attendance auto-filled</div>`}${freeLv>0&&html`<div style=${{marginTop:7,background:T.grn+'14',borderRadius:8,padding:'6px 11px',fontSize:11,color:T.grn,fontWeight:700}}>✓ ${Math.min(rawAb,freeLv)} free leave${freeLv===1?'':'s'}/mo for ${proc.role} — only ${Math.max(0,rawAb-freeLv)}d counted</div>`}${(parseFloat(abs)||0)>0&&html`<div style=${{marginTop:8,background:T.red+'14',borderRadius:8,padding:'7px 10px',display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:12,color:T.sub}}>${Math.max(0,rawAb-freeLv)}d × ${fR(Math.round(pDay))}</span><span style=${{fontSize:12,fontWeight:800,color:T.red}}>−${fR(absDed.toFixed(2))}</span></div>`}</div>
           <div style=${{background:T.bg,border:`1px solid ${T.red}30`,borderRadius:12,padding:12}}><div style=${{fontSize:10,fontWeight:800,color:T.red,marginBottom:9}}>2 · ADVANCE & CHEQUE DEDUCTION</div>
             ${(tPA>0||tPC>0)?html`<div>${tPA>0&&html`<div style=${{background:T.red+'14',borderRadius:8,padding:'7px 10px',marginBottom:7,display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:12,color:T.sub}}>Cash advances</span><span style=${{fontSize:12,fontWeight:800,color:T.red}}>${fR(tPA)}</span></div>`}${tPC>0&&html`<div style=${{background:T.yel+'14',borderRadius:8,padding:'7px 10px',marginBottom:7,display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:12,color:T.sub}}>Unsettled cheques</span><span style=${{fontSize:12,fontWeight:800,color:T.yel}}>${fR(tPC)}</span></div>`}<div style=${{background:T.red+'14',borderRadius:8,padding:'7px 10px',marginBottom:9,display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:12,color:T.sub,fontWeight:700}}>Total pending</span><span style=${{fontSize:13,fontWeight:900,color:T.red}}>${fR(tPA+tPC)}</span></div><${Inp} T=${T} label="Deduct this month — remaining carries forward" type="number" value=${advD} onChange=${e=>setAdvD(e.target.value)} placeholder="0"/>${Number(advD)>0&&Number(advD)<(tPA+tPC)&&html`<div style=${{marginTop:7,background:T.yel+'14',borderRadius:8,padding:'7px 10px',display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:11,color:T.sub}}>Carry forward</span><span style=${{fontSize:12,fontWeight:800,color:T.yel}}>${fR((tPA+tPC)-Number(advD))}</span></div>`}</div>`:html`<div style=${{fontSize:13,color:T.mut,textAlign:'center',padding:6}}>No pending dues ✓</div>`}
           </div>
           <div style=${{background:T.bg,border:`1px solid ${T.blu}30`,borderRadius:12,padding:12}}><div style=${{fontSize:10,fontWeight:800,color:T.blu,marginBottom:9}}>3 · CLIENT PAYMENT</div><${Inp} T=${T} label="Amount received (₹)" type="number" value=${cpV} onChange=${e=>setCpV(e.target.value)} placeholder=${chequeAmt(proc.recPay,cfg,proc.role)||'Enter amount'}/>${proc.recPay&&html`<div style=${{fontSize:11,color:T.sub,marginTop:5}}>Cheque Amount: ${fR(chequeAmt(proc.recPay,cfg,proc.role))}</div>`}</div>
           <div style=${{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:12,padding:13}}><div style=${{fontSize:10,fontWeight:800,color:T.sub,marginBottom:10}}>BREAKDOWN</div>
             ${isProRata?html`<${RR} T=${T} label=${'Pro-Rata Base ('+effDays+'÷30 × '+fR(proc.mRate)+')'} value=${fR(proBase.toFixed(2))} accent=${proRataReason==='left'?T.red:T.grn}/>`:html`<${RR} T=${T} label="Monthly Rate" value=${fR(proc.mRate)}/>`}<div style=${{height:5}}/>
-            <${RR} T=${T} label=${'Absent ('+(parseFloat(abs)||0)+'×'+fR(Math.round(pDay))+')'} value=${'−'+fR(absDed.toFixed(2))} accent=${T.red}/>
+            <${RR} T=${T} label=${'Absent ('+Math.max(0,rawAb-freeLv)+'×'+fR(Math.round(pDay))+(freeLv>0?', '+Math.min(rawAb,freeLv)+' free':'')+')'} value=${'−'+fR(absDed.toFixed(2))} accent=${T.red}/>
             <${RR} T=${T} label="Gross" value=${fR(gross.toFixed(2))} bold border=${true}/>
             <${RR} T=${T} label="Deducted" value=${'−'+fR(advAmt.toFixed(2))} accent=${T.red}/>
             <${RR} T=${T} label="Net Salary (Payable)" value=${fR(net.toFixed(2))} bold accent=${T.acc} border=${true}/>
@@ -2295,11 +2319,13 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
     const e=editSalEntry;
     const FD2=30;
     const absN=Math.max(0,parseFloat(editSalForm.abs)||0);
+    const freeLv=freeLeaveOf(cfg,e.role);
+    const absEff=Math.max(0,absN-freeLv);
     const cpN=Number(editSalForm.cp)||0;
     const pDay=Number(e.mRate)/FD2;
     const effDays=e.leftWD||e.joinWD||FD2;
     const proBase=pDay*effDays;
-    const absDed=pDay*Math.min(absN,effDays);
+    const absDed=pDay*Math.min(absEff,effDays);
     const mDedAmt=Number(e.mDedAmt||0);
     // Gross/Payable = Monthly Salary − Absent deduction only (statutory mDedAmt not subtracted here).
     const gross=Math.max(0,proBase-absDed);
@@ -2464,11 +2490,13 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
       const e=editSalEntry;
       const FD2=30;
       const absN=Math.max(0,parseFloat(editSalForm.abs)||0);
+      const freeLv=freeLeaveOf(cfg,e.role);
+      const absEff=Math.max(0,absN-freeLv);
       const cpN=Number(editSalForm.cp)||0;
       const pDay=Number(e.mRate)/FD2;
       const effDays=e.leftWD||e.joinWD||FD2;
       const proBase=pDay*effDays;
-      const absDed=pDay*Math.min(absN,effDays);
+      const absDed=pDay*Math.min(absEff,effDays);
       const mDedAmt=Number(e.mDedAmt||0);
       // Gross/Payable = Monthly Salary − Absent deduction only (statutory mDedAmt not subtracted here).
       const gross=Math.max(0,proBase-absDed);
@@ -2493,6 +2521,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
           </div>
           <div style=${{background:previewNet!==e.net?T.acc+'14':T.bg,border:`1px solid ${previewNet!==e.net?T.accB:T.bdr}`,borderRadius:11,padding:11}}>
             <div style=${{fontSize:10,fontWeight:800,color:T.sub,marginBottom:7}}>RECALCULATED PREVIEW</div>
+            ${freeLv>0&&html`<div style=${{fontSize:11,color:T.acc,marginBottom:5}}>📋 ${Math.min(absN,freeLv)} free leave${freeLv===1?'':'s'} applied (${e.role} gets ${freeLv}/mo) — ${absEff}d counted for deduction</div>`}
             <div style=${{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style=${{fontSize:12,color:T.sub}}>Gross</span><span style=${{fontSize:12,fontWeight:800,color:T.acc,fontFamily:"'Inter'"}}>${fR(gross)}</span></div>
             <div style=${{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style=${{fontSize:12,color:T.sub}}>Net Salary</span><span style=${{fontSize:13,fontWeight:900,color:previewNet!==e.net?T.acc:T.txt,fontFamily:"'Inter'"}}>${fR(previewNet)}${previewNet!==e.net?html` <span style=${{fontSize:10,color:T.sub}}>(was ${fR(e.net)})</span>`:''}</span></div>
             ${cpN>0&&html`<div style=${{display:'flex',justifyContent:'space-between'}}><span style=${{fontSize:12,color:T.sub}}>Margin</span><span style=${{fontSize:12,fontWeight:800,color:previewMargin>=0?T.grn:T.red,fontFamily:"'Inter'"}}>${previewMargin>=0?'+':''}${fR(previewMargin)}</span></div>`}
@@ -2719,12 +2748,18 @@ function PgSet({staff,setStaff,adv,setAdv,sal,setSal,chq,setChq,cats,setCats,cfg
             const toggleCatEnabled=()=>{const dc=cfg.disabledCats||[];const nd=isDis?dc.filter(x=>x!==c):[...dc,c];pCfg({...cfg,disabledCats:nd});msg(isDis?c+' enabled':c+' disabled');};
             const curCode=catCode(cfg,c);
             const setCode=v=>{const clean=v.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4);const nm={...(cfg.catCodes||{})};if(clean)nm[c]=clean;else delete nm[c];pCfg({...cfg,catCodes:nm});};
+            const curFreeLv=freeLeaveOf(cfg,c);
+            const setFreeLv=v=>{const n=Math.max(0,Math.min(30,parseFloat(v)||0));const nm={...(cfg.catFreeLeaves||{})};if(n>0)nm[c]=n;else delete nm[c];pCfg({...cfg,catFreeLeaves:nm});};
             return html`<div key=${c+i} style=${{background:T.bg,border:`1px solid ${isDis?T.red+'40':T.bdr}`,borderRadius:10,padding:'9px 11px',opacity:isDis?0.6:1}}>
               <div style=${{display:'flex',alignItems:'center',gap:9,marginBottom:9}}>
                 <div style=${{width:9,height:9,borderRadius:'50%',background:CC[i%CC.length],flexShrink:0}}/>
                 ${eCI===i?html`<input value=${eCV} onChange=${e=>setECV(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&saveCE()} style=${{...iSt(T),flex:1,padding:'5px 9px',fontSize:13}} autoFocus=${true}/><button onClick=${saveCE} style=${{background:T.grn+'22',border:`1px solid ${T.grn}33`,borderRadius:7,padding:'4px 9px',cursor:'pointer',color:T.grn,fontSize:12,fontWeight:800,fontFamily:'inherit'}}>Save</button><button onClick=${()=>setECI(null)} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="x" s=${14} c=${T.sub}/></button>`:html`<span style=${{flex:1,fontSize:13,fontWeight:700,color:T.txt}}>${c}${isDis&&html`<span style=${{marginLeft:7,fontSize:9,fontWeight:800,color:T.red,background:T.red+'18',borderRadius:20,padding:'2px 7px'}}>DISABLED</span>`}</span><input value=${curCode} onChange=${e=>setCode(e.target.value)} placeholder="Code" title="Short code (e.g. LT for Teacher, LD for Driver) — shown on badges and used as this category's Employee ID prefix" style=${{...iSt(T),width:52,padding:'5px 7px',fontSize:11,fontWeight:800,textAlign:'center',textTransform:'uppercase'}}/><button onClick=${toggleCatEnabled} title=${isDis?'Enable category':'Disable category'} style=${{background:isDis?T.grn+'18':T.red+'14',border:`1px solid ${isDis?T.grn+'44':T.red+'33'}`,borderRadius:7,padding:'4px 9px',cursor:'pointer',color:isDis?T.grn:T.red,fontSize:11,fontWeight:800,fontFamily:'inherit'}}>${isDis?'Enable':'Disable'}</button><button onClick=${()=>{setECI(i);setECV(c);}} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="ed" s=${13} c=${T.sub}/></button><button onClick=${()=>removeCat(i)} style=${{background:'transparent',border:'none',cursor:'pointer',display:'flex'}}><${Ico} n="tr" s=${13} c=${T.red}/></button>`}
               </div>
               ${isDis&&html`<div style=${{fontSize:11,color:T.red,marginBottom:9}}>This category and its staff are hidden across the app (Dashboard, Salary, Advances, Cheques, Reports). Enable to bring them back.</div>`}
+              <div style=${{display:'flex',alignItems:'center',gap:8,marginBottom:9,background:T.grn+'0f',border:`1px solid ${T.grn}30`,borderRadius:8,padding:'6px 9px'}}>
+                <div style=${{flex:1}}><div style=${{fontSize:9,fontWeight:800,color:T.grn,letterSpacing:.6}}>FREE LEAVES / MONTH</div><div style=${{fontSize:9.5,color:T.mut,marginTop:1}}>Absent days up to this count aren't deducted from pay</div></div>
+                <input type="number" min="0" max="30" step="0.5" value=${curFreeLv||''} onChange=${e=>setFreeLv(e.target.value)} placeholder="0" style=${{...iSt(T),width:52,padding:'5px 7px',fontSize:12,fontWeight:800,textAlign:'center'}}/>
+              </div>
               <div style=${{fontSize:9,fontWeight:800,color:T.mut,letterSpacing:.6,marginBottom:5}}>MARGIN</div>
               <div style=${{display:'flex',flexWrap:'wrap',gap:6,marginBottom:9}}>
                 ${chips.map(([key,lbl])=>{
