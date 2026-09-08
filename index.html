@@ -2412,7 +2412,16 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
     const exp=Number(editChqForm.expected)||Number(editChqForm.ret)||0;
     const ret=Number(editChqForm.ret)||0;
     const sf=Math.max(0,exp-ret);
+    const excess=Math.max(0,ret-exp);
     setChq(chq.map(c=>c.id===editChqEntry.id?{...c,expected:exp,ret:editChqForm.ret,chqAmt:editChqForm.expected,chqNo:editChqForm.chqNo,date:editChqForm.date,client:editChqForm.client,note:editChqForm.note,shortfall:sf}:c));
+    if(excess>0&&editChqEntry.status==='settled'){
+      let rem=excess;const sid=editChqEntry.staffId;
+      const newAdv=[...adv].sort((a,b)=>new Date(a.date)-new Date(b.date)).map(a=>{if(a.staffId!==sid||a.status!=='pending'||rem<=0)return a;const tk=Math.min(rem,Number(a.amount));rem-=tk;return tk>=Number(a.amount)?{...a,status:'deducted',dedOn:today(),pNote:'Adjusted vs cheque overcollection — '+editChqForm.client}:{...a,amount:Number(a.amount)-tk,pNote:`₹${tk.toFixed(0)} adjusted vs cheque overcollection`};});
+      setAdv(newAdv);
+      setEditChqEntry(null);
+      msgFn(rem>0?'Saved — '+fR(excess)+' extra, '+fR(rem)+' had no pending advance to offset':'Saved — '+fR(excess)+' extra adjusted against pending advance');
+      return;
+    }
     setEditChqEntry(null);
     msgFn('✅ Cheque entry updated');
   };
