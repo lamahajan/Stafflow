@@ -2189,7 +2189,14 @@ function PgChq({staff,chq,setChq,sal,adv,setAdv,ctx}){
   const onSC=sid=>{const ls=sal.filter(s=>s.sid===sid).sort((a,b)=>(b.yr*100+b.mon)-(a.yr*100+a.mon))[0];const m=ls?Math.max(0,Number(ls.margin||0)):0;setForm(f=>({...f,staffId:sid,chqAmt:m?String(m):'',ret:m?String(m):'',client:ls?.client||f.client}));};
   const add=()=>{if(!form.staffId||!form.ret||!form.client)return msg('Fill required fields','err');setChq([...chq,{id:uid(),...form,expected:Number(form.chqAmt)||Number(form.ret),shortfall:0,status:'pending'}]);msg('Recorded');setShowF(false);setForm(blank);};
   const openC=id=>{const c=chq.find(x=>x.id===id);if(!c)return;setActAmt(String(c.expected||c.ret));setCId(id);};
-  const confirmC=()=>{const c=chq.find(x=>x.id===cId);if(!c)return;const actual=Math.max(0,Number(actAmt)||0),exp=Number(c.expected||c.chqAmt||c.ret),sf=Math.max(0,exp-actual);setChq(chq.map(x=>x.id===cId?{...x,ret:actual,status:'settled',settledOn:today(),shortfall:sf}:x));if(sf>0){setAdv([...adv,{id:uid(),staffId:c.staffId,amount:sf,date:today(),note:'Cheque shortfall — '+c.client,status:'pending'}]);msg('Collected '+fR(actual)+'! '+fR(sf)+' → advance');}else msg('Full amount collected ✓');setCId(null);setActAmt('');};
+  const confirmC=()=>{const c=chq.find(x=>x.id===cId);if(!c)return;const actual=Math.max(0,Number(actAmt)||0),exp=Number(c.expected||c.chqAmt||c.ret),sf=Math.max(0,exp-actual),excess=Math.max(0,actual-exp);setChq(chq.map(x=>x.id===cId?{...x,ret:actual,status:'settled',settledOn:today(),shortfall:sf}:x));
+    if(sf>0){setAdv([...adv,{id:uid(),staffId:c.staffId,amount:sf,date:today(),note:'Cheque shortfall — '+c.client,status:'pending'}]);msg('Collected '+fR(actual)+'! '+fR(sf)+' → advance');}
+    else if(excess>0){let rem=excess;const newAdv=[...adv].sort((a,b)=>new Date(a.date)-new Date(b.date)).map(a=>{if(a.staffId!==c.staffId||a.status!=='pending'||rem<=0)return a;const tk=Math.min(rem,Number(a.amount));rem-=tk;return tk>=Number(a.amount)?{...a,status:'deducted',dedOn:today(),pNote:'Adjusted vs cheque overcollection — '+c.client}:{...a,amount:Number(a.amount)-tk,pNote:`₹${tk.toFixed(0)} adjusted vs cheque overcollection`};});
+      setAdv(newAdv);
+      if(rem>0)msg('Collected '+fR(actual)+'! '+fR(excess)+' extra — '+fR(rem)+' had no pending advance to offset');
+      else msg('Collected '+fR(actual)+'! '+fR(excess)+' extra adjusted against pending advance');}
+    else msg('Full amount collected ✓');
+    setCId(null);setActAmt('');};
   const del=id=>{setChq(chq.filter(c=>c.id!==id));msg('Deleted');};
   const sOpts=[{value:'',label:'Select Staff'},...staff.map(s=>({value:s.id,label:s.name+' ('+s.role+')'}))];
   const catFiltered=pdfCat==='ALL'?chq:chq.filter(c=>{const s=staff.find(x=>x.id===c.staffId);return s&&s.role===pdfCat;});
