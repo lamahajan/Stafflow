@@ -2172,6 +2172,9 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
             <${Ico} n=${isOpen?'up':'dn'} s=${16} c=${T.sub}/>
           </div>
         </div>
+        ${sAdv.length>0&&html`<div style=${{padding:'0 14px 12px'}}><button onClick=${e=>{e.stopPropagation();openRepay(s.id);}} style=${{width:'100%',background:T.grn+'18',border:`1px solid ${T.grn}33`,borderRadius:10,padding:'9px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
+          <${Ico} n="chk" s=${13} c=${T.grn}/><span style=${{fontSize:12,fontWeight:800,color:T.grn}}>Mark Cash Advance Repaid</span>
+        </button></div>`}
         ${isOpen&&html`<div style=${{borderTop:`1px solid ${T.bdr}`,padding:'10px 14px 14px',display:'flex',flexDirection:'column',gap:8}}>
           ${sAdv.length>0&&html`<div style=${{fontSize:10,fontWeight:800,color:T.red,letterSpacing:.6,marginBottom:2}}>CASH ADVANCES</div>`}
           ${sAdv.map(a=>html`<div key=${a.id} style=${{background:T.bg,border:`1px solid ${T.red}22`,borderRadius:10,padding:'9px 11px',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
@@ -2187,9 +2190,6 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
             <span style=${{fontSize:12,fontWeight:800,color:T.txt}}>Total owed by ${s.name}</span>
             <span style=${{fontSize:14,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(total)}</span>
           </div>
-          ${sAdv.length>0&&html`<button onClick=${()=>openRepay(s.id)} style=${{background:T.grn+'18',border:`1px solid ${T.grn}33`,borderRadius:10,padding:'9px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
-            <${Ico} n="chk" s=${13} c=${T.grn}/><span style=${{fontSize:12,fontWeight:800,color:T.grn}}>Mark Cash Advance Repaid</span>
-          </button>`}
         </div>`}
       </div>`;
     })}
