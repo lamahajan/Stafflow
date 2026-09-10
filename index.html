@@ -2095,14 +2095,26 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
   const[form,setForm]=useState({staffId:'',amount:'',date:today(),note:''});
   const[expanded,setExpanded]=useState(null);
   const[pdfCat,setPdfCat]=useState('ALL'),[showPdfOpts,setShowPdfOpts]=useState(false);
-  const[repayId,setRepayId]=useState(null),[repayAmt,setRepayAmt]=useState('');
+  const[repayStaffId,setRepayStaffId]=useState(null),[repayAmt,setRepayAmt]=useState('');
   const add=()=>{if(!form.staffId||!form.amount)return msg('Select staff & enter amount','err');setAdv([...adv,{id:uid(),...form,status:'pending'}]);msg('Recorded');setShowF(false);setForm({staffId:'',amount:'',date:today(),note:''});};
   const delAdv=id=>{setAdv(adv.filter(a=>a.id!==id));msg('Deleted');};
-  const openRepay=id=>{const a=adv.find(x=>x.id===id);if(!a)return;setRepayAmt(String(a.amount));setRepayId(id);};
-  const confirmRepay=()=>{const a=adv.find(x=>x.id===repayId);if(!a)return;const amt=Math.max(0,Number(repayAmt)||0);if(amt<=0)return msg('Enter valid amount','err');
-    if(amt>=Number(a.amount)){setAdv(adv.map(x=>x.id===repayId?{...x,status:'repaid',repaidOn:today()}:x));msg('Marked as repaid in cash ✓');}
-    else{setAdv(adv.map(x=>x.id===repayId?{...x,amount:Number(a.amount)-amt,pNote:`₹${amt} repaid in cash on ${today()}`}:x));msg(fR(amt)+' repaid — '+fR(Number(a.amount)-amt)+' still pending');}
-    setRepayId(null);setRepayAmt('');};
+  const openRepay=staffId=>{setRepayAmt('');setRepayStaffId(staffId);};
+  const confirmRepay=()=>{
+    const amt=Math.max(0,Number(repayAmt)||0);
+    if(amt<=0)return msg('Enter valid amount','err');
+    const sorted=adv.filter(a=>a.staffId===repayStaffId&&a.status==='pending').sort((a,b)=>new Date(a.date)-new Date(b.date));
+    if(!sorted.length)return msg('No pending advances','err');
+    let rem=amt;const updates={};
+    for(const a of sorted){
+      if(rem<=0)break;
+      const tk=Math.min(rem,Number(a.amount));rem-=tk;
+      updates[a.id]=tk>=Number(a.amount)?{status:'repaid',repaidOn:today()}:{amount:Number(a.amount)-tk,pNote:`₹${tk.toFixed(0)} repaid in cash on ${today()}`};
+    }
+    setAdv(adv.map(a=>updates[a.id]?{...a,...updates[a.id]}:a));
+    if(rem>0)msg(fR(amt-rem)+' repaid (oldest first) — '+fR(rem)+' had no more pending advance to apply');
+    else msg(fR(amt)+' repaid — applied to oldest advances first ✓');
+    setRepayStaffId(null);setRepayAmt('');
+  };
   const sOpts=[{value:'',label:'Select Staff'},...staff.map(s=>({value:s.id,label:s.name+' ('+s.role+')'}))];
   const staffWithDues=staff.filter(s=>adv.filter(a=>a.staffId===s.id&&a.status==='pending').length+chq.filter(c=>c.staffId===s.id&&c.status==='pending').length>0);
   const totalPendAdv=adv.filter(a=>a.status==='pending').reduce((s,a)=>s+Number(a.amount),0);
@@ -2164,13 +2176,7 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
           ${sAdv.length>0&&html`<div style=${{fontSize:10,fontWeight:800,color:T.red,letterSpacing:.6,marginBottom:2}}>CASH ADVANCES</div>`}
           ${sAdv.map(a=>html`<div key=${a.id} style=${{background:T.bg,border:`1px solid ${T.red}22`,borderRadius:10,padding:'9px 11px',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
             <div><div style=${{fontSize:12,fontWeight:700,color:T.txt}}>${a.note||'Advance'}</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>${a.date}</div>${a.pNote&&html`<div style=${{fontSize:10,color:T.yel,marginTop:2}}>⚡ ${a.pNote}</div>`}</div>
-            <div style=${{display:'flex',alignItems:'center',gap:6}}>
-              <span style=${{fontSize:14,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(a.amount)}</span>
-              <button onClick=${()=>openRepay(a.id)} title="Mark as Repaid (Cash)" style=${{background:T.grn+'18',border:`1px solid ${T.grn}33`,borderRadius:7,padding:'4px 7px',cursor:'pointer',display:'flex',alignItems:'center',gap:4}}>
-                <${Ico} n="chk" s=${12} c=${T.grn}/><span style=${{fontSize:10,fontWeight:800,color:T.grn}}>Repaid</span>
-              </button>
-              <button onClick=${()=>delAdv(a.id)} style=${{background:'transparent',border:'none',cursor:'pointer',padding:3,display:'flex'}}><${Ico} n="tr" s=${13} c=${T.mut}/></button>
-            </div>
+            <div style=${{display:'flex',alignItems:'center',gap:8}}><span style=${{fontSize:14,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(a.amount)}</span><button onClick=${()=>delAdv(a.id)} style=${{background:'transparent',border:'none',cursor:'pointer',padding:3,display:'flex'}}><${Ico} n="tr" s=${13} c=${T.mut}/></button></div>
           </div>`)}
           ${sChq.length>0&&html`<div style=${{fontSize:10,fontWeight:800,color:T.yel,letterSpacing:.6,marginTop:4,marginBottom:2}}>UNSETTLED CHEQUES</div>`}
           ${sChq.map(c=>html`<div key=${c.id} style=${{background:T.bg,border:`1px solid ${T.yel}22`,borderRadius:10,padding:'9px 11px',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
@@ -2181,6 +2187,9 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
             <span style=${{fontSize:12,fontWeight:800,color:T.txt}}>Total owed by ${s.name}</span>
             <span style=${{fontSize:14,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(total)}</span>
           </div>
+          ${sAdv.length>0&&html`<button onClick=${()=>openRepay(s.id)} style=${{background:T.grn+'18',border:`1px solid ${T.grn}33`,borderRadius:10,padding:'9px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6,fontFamily:'inherit'}}>
+            <${Ico} n="chk" s=${13} c=${T.grn}/><span style=${{fontSize:12,fontWeight:800,color:T.grn}}>Mark Cash Advance Repaid</span>
+          </button>`}
         </div>`}
       </div>`;
     })}
@@ -2191,11 +2200,11 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
       <${Inp} T=${T} label="Reason" value=${form.note} onChange=${e=>setForm({...form,note:e.target.value})} placeholder="e.g. emergency"/>
       <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setShowF(false)}/><${Btn} T=${T} full ch="Record" onClick=${add}/></div>
     </div><//>`}
-    ${repayId&&(()=>{const a=adv.find(x=>x.id===repayId);if(!a)return null;const s=staff.find(x=>x.id===a.staffId);return html`<${Mdl} title="Mark Advance Repaid (Cash)" onClose=${()=>setRepayId(null)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:13}}>
-      <div style=${{background:T.bg,borderRadius:10,padding:'9px 11px'}}><div style=${{fontSize:12,fontWeight:700,color:T.txt}}>${s?.name||'—'} — ${a.note||'Advance'}</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>Outstanding: ${fR(a.amount)}</div></div>
+    ${repayStaffId&&(()=>{const s=staff.find(x=>x.id===repayStaffId);const outstanding=adv.filter(a=>a.staffId===repayStaffId&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0);return html`<${Mdl} title="Mark Advance Repaid (Cash)" onClose=${()=>setRepayStaffId(null)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:13}}>
+      <div style=${{background:T.bg,borderRadius:10,padding:'9px 11px'}}><div style=${{fontSize:12,fontWeight:700,color:T.txt}}>${s?.name||'—'}</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>Total outstanding cash advances: ${fR(outstanding)}</div></div>
       <${Inp} T=${T} label="Amount received in cash (₹) *" type="number" value=${repayAmt} onChange=${e=>setRepayAmt(e.target.value)} placeholder="e.g. 2000"/>
-      <div style=${{fontSize:11,color:T.sub}}>Full amount marks it as repaid. A lower amount reduces the outstanding balance — the rest stays pending.</div>
-      <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setRepayId(null)}/><${Btn} T=${T} full ch="Confirm Repaid" onClick=${confirmRepay}/></div>
+      <div style=${{fontSize:11,color:T.sub}}>Applied to the oldest pending advance first, then the next, and so on until the amount is used up.</div>
+      <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setRepayStaffId(null)}/><${Btn} T=${T} full ch="Confirm Repaid" onClick=${confirmRepay}/></div>
     </div><//>`;})()}
   </div>`;
 }
