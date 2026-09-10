@@ -2040,7 +2040,7 @@ function groupAdvRowsByStaff(list,staff,withDedOn){
     items.forEach(a=>{
       sub+=Number(a.amount);
       rows.push(withDedOn
-        ?[sr++,s?.name||'—',s?.role||'—',a.date,a.note||'General Advance',fRp(a.amount),a.dedOn||'—']
+        ?[sr++,s?.name||'—',s?.role||'—',a.date,a.note||'General Advance',fRp(a.amount),a.status==='repaid'?'Cash: '+(a.repaidOn||'—'):(a.dedOn||'—')]
         :[sr++,s?.name||'—',s?.role||'—',a.date,a.note||'General Advance',fRp(a.amount)]);
     });
     subtotalRows.push(rows.length);
@@ -2061,7 +2061,7 @@ async function genAdvancesPDF(adv,staff,cats,filterCat,msgFn,cfg){
     let y=35;
     const filtered=filterCat&&filterCat!=='ALL'?adv.filter(a=>{const s=staff.find(x=>x.id===a.staffId);return s&&s.role===filterCat;}):adv;
     const pending=filtered.filter(a=>a.status==='pending');
-    const recovered=filtered.filter(a=>a.status==='deducted');
+    const recovered=filtered.filter(a=>a.status==='deducted'||a.status==='repaid');
     const pAmt=pending.reduce((s,a)=>s+Number(a.amount),0);
     const rAmt=recovered.reduce((s,a)=>s+Number(a.amount),0);
     y=summBox(doc,[['Pending',fRp(pAmt),AMB],['Recovered',fRp(rAmt),GRN_],['Total Records',String(filtered.length),PRP]],y);
@@ -2079,7 +2079,7 @@ async function genAdvancesPDF(adv,staff,cats,filterCat,msgFn,cfg){
       if(y>230){doc.addPage();pdfPage(doc,'CASH ADVANCES',label,[],1,1);y=35;}
       y=secHead(doc,'Recovered Advances ('+recovered.length+') — Grouped by Staff',y);
       const{rows,subtotalRows}=groupAdvRowsByStaff(recovered,staff,true);
-      doc.autoTable({startY:y,head:[['Sr.','Staff Name','Role','Date','Note','Amount (₹)','Deducted On']],
+      doc.autoTable({startY:y,head:[['Sr.','Staff Name','Role','Date','Note','Amount (₹)','Deducted/Repaid On']],
         body:rows,
         styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},
         columnStyles:{0:{cellWidth:8,halign:'center'},5:{halign:'right'},6:{halign:'center',cellWidth:22}},
@@ -2095,13 +2095,19 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
   const[form,setForm]=useState({staffId:'',amount:'',date:today(),note:''});
   const[expanded,setExpanded]=useState(null);
   const[pdfCat,setPdfCat]=useState('ALL'),[showPdfOpts,setShowPdfOpts]=useState(false);
+  const[repayId,setRepayId]=useState(null),[repayAmt,setRepayAmt]=useState('');
   const add=()=>{if(!form.staffId||!form.amount)return msg('Select staff & enter amount','err');setAdv([...adv,{id:uid(),...form,status:'pending'}]);msg('Recorded');setShowF(false);setForm({staffId:'',amount:'',date:today(),note:''});};
   const delAdv=id=>{setAdv(adv.filter(a=>a.id!==id));msg('Deleted');};
+  const openRepay=id=>{const a=adv.find(x=>x.id===id);if(!a)return;setRepayAmt(String(a.amount));setRepayId(id);};
+  const confirmRepay=()=>{const a=adv.find(x=>x.id===repayId);if(!a)return;const amt=Math.max(0,Number(repayAmt)||0);if(amt<=0)return msg('Enter valid amount','err');
+    if(amt>=Number(a.amount)){setAdv(adv.map(x=>x.id===repayId?{...x,status:'repaid',repaidOn:today()}:x));msg('Marked as repaid in cash ✓');}
+    else{setAdv(adv.map(x=>x.id===repayId?{...x,amount:Number(a.amount)-amt,pNote:`₹${amt} repaid in cash on ${today()}`}:x));msg(fR(amt)+' repaid — '+fR(Number(a.amount)-amt)+' still pending');}
+    setRepayId(null);setRepayAmt('');};
   const sOpts=[{value:'',label:'Select Staff'},...staff.map(s=>({value:s.id,label:s.name+' ('+s.role+')'}))];
   const staffWithDues=staff.filter(s=>adv.filter(a=>a.staffId===s.id&&a.status==='pending').length+chq.filter(c=>c.staffId===s.id&&c.status==='pending').length>0);
   const totalPendAdv=adv.filter(a=>a.status==='pending').reduce((s,a)=>s+Number(a.amount),0);
   const totalPendChq=chq.filter(c=>c.status==='pending').reduce((s,c)=>s+Number(c.expected||c.ret),0);
-  const totalRec=adv.filter(a=>a.status==='deducted').reduce((s,a)=>s+Number(a.amount),0);
+  const totalRec=adv.filter(a=>a.status==='deducted'||a.status==='repaid').reduce((s,a)=>s+Number(a.amount),0);
   return html`<div style=${{padding:16}}>
     <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:13}}>
       <div><div style=${{fontSize:20,fontWeight:900,color:T.txt}}>Advances</div><div style=${{fontSize:12,color:T.sub}}>Tap staff to expand details</div></div>
@@ -2158,7 +2164,13 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
           ${sAdv.length>0&&html`<div style=${{fontSize:10,fontWeight:800,color:T.red,letterSpacing:.6,marginBottom:2}}>CASH ADVANCES</div>`}
           ${sAdv.map(a=>html`<div key=${a.id} style=${{background:T.bg,border:`1px solid ${T.red}22`,borderRadius:10,padding:'9px 11px',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
             <div><div style=${{fontSize:12,fontWeight:700,color:T.txt}}>${a.note||'Advance'}</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>${a.date}</div>${a.pNote&&html`<div style=${{fontSize:10,color:T.yel,marginTop:2}}>⚡ ${a.pNote}</div>`}</div>
-            <div style=${{display:'flex',alignItems:'center',gap:8}}><span style=${{fontSize:14,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(a.amount)}</span><button onClick=${()=>delAdv(a.id)} style=${{background:'transparent',border:'none',cursor:'pointer',padding:3,display:'flex'}}><${Ico} n="tr" s=${13} c=${T.mut}/></button></div>
+            <div style=${{display:'flex',alignItems:'center',gap:6}}>
+              <span style=${{fontSize:14,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(a.amount)}</span>
+              <button onClick=${()=>openRepay(a.id)} title="Mark as Repaid (Cash)" style=${{background:T.grn+'18',border:`1px solid ${T.grn}33`,borderRadius:7,padding:'4px 7px',cursor:'pointer',display:'flex',alignItems:'center',gap:4}}>
+                <${Ico} n="chk" s=${12} c=${T.grn}/><span style=${{fontSize:10,fontWeight:800,color:T.grn}}>Repaid</span>
+              </button>
+              <button onClick=${()=>delAdv(a.id)} style=${{background:'transparent',border:'none',cursor:'pointer',padding:3,display:'flex'}}><${Ico} n="tr" s=${13} c=${T.mut}/></button>
+            </div>
           </div>`)}
           ${sChq.length>0&&html`<div style=${{fontSize:10,fontWeight:800,color:T.yel,letterSpacing:.6,marginTop:4,marginBottom:2}}>UNSETTLED CHEQUES</div>`}
           ${sChq.map(c=>html`<div key=${c.id} style=${{background:T.bg,border:`1px solid ${T.yel}22`,borderRadius:10,padding:'9px 11px',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
@@ -2179,6 +2191,12 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
       <${Inp} T=${T} label="Reason" value=${form.note} onChange=${e=>setForm({...form,note:e.target.value})} placeholder="e.g. emergency"/>
       <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setShowF(false)}/><${Btn} T=${T} full ch="Record" onClick=${add}/></div>
     </div><//>`}
+    ${repayId&&(()=>{const a=adv.find(x=>x.id===repayId);if(!a)return null;const s=staff.find(x=>x.id===a.staffId);return html`<${Mdl} title="Mark Advance Repaid (Cash)" onClose=${()=>setRepayId(null)} T=${T}><div style=${{display:'flex',flexDirection:'column',gap:13}}>
+      <div style=${{background:T.bg,borderRadius:10,padding:'9px 11px'}}><div style=${{fontSize:12,fontWeight:700,color:T.txt}}>${s?.name||'—'} — ${a.note||'Advance'}</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>Outstanding: ${fR(a.amount)}</div></div>
+      <${Inp} T=${T} label="Amount received in cash (₹) *" type="number" value=${repayAmt} onChange=${e=>setRepayAmt(e.target.value)} placeholder="e.g. 2000"/>
+      <div style=${{fontSize:11,color:T.sub}}>Full amount marks it as repaid. A lower amount reduces the outstanding balance — the rest stays pending.</div>
+      <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setRepayId(null)}/><${Btn} T=${T} full ch="Confirm Repaid" onClick=${confirmRepay}/></div>
+    </div><//>`;})()}
   </div>`;
 }
 function PgChq({staff,chq,setChq,sal,adv,setAdv,ctx}){
@@ -2287,7 +2305,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
   const openingBal=obAdv+obChq;
   const entries=[];
   sal.filter(s=>s.sid===member.id).forEach(s=>{const d=s.yr+'-'+String(s.mon).padStart(2,'0')+'-28';entries.push({id:s.id+'s',date:d,mon:s.mon,yr:s.yr,type:'salary',label:'Salary — '+mName(s.mon,s.yr),sub:[s.abs>0?s.abs+'d absent':'Full month',s.advDed>0?'Ded −'+fR(s.advDed):null,s.paid?'Paid':'Pending'].filter(Boolean).join(' · '),debit:Number(s.net),credit:0,paid:s.paid});if(Number(s.cp)>0)entries.push({id:s.id+'c',date:d,mon:s.mon,yr:s.yr,type:'client',label:'Client Payment — '+mName(s.mon,s.yr),sub:s.client||'',credit:Number(s.cp),debit:0});});
-  adv.filter(a=>a.staffId===member.id).forEach(a=>{const d2=new Date(a.date);entries.push({id:a.id,date:a.date,mon:d2.getMonth()+1,yr:d2.getFullYear(),type:'advance',label:'Advance'+(a.note?' — '+a.note:''),sub:a.status==='deducted'?'Deducted '+(a.dedOn||''):a.pNote||'Pending',debit:Number(a.amount),credit:0,status:a.status});});
+  adv.filter(a=>a.staffId===member.id).forEach(a=>{const d2=new Date(a.date);entries.push({id:a.id,date:a.date,mon:d2.getMonth()+1,yr:d2.getFullYear(),type:'advance',label:'Advance'+(a.note?' — '+a.note:''),sub:a.status==='deducted'?'Deducted '+(a.dedOn||''):a.status==='repaid'?'Repaid (Cash) '+(a.repaidOn||''):a.pNote||'Pending',debit:Number(a.amount),credit:0,status:a.status});});
   chq.filter(c=>c.staffId===member.id).forEach(c=>{const d2=new Date(c.date),isPend=c.status!=='settled';entries.push({id:c.id,date:c.date,mon:d2.getMonth()+1,yr:d2.getFullYear(),type:'cheque',label:'Cheque Return — '+c.client,sub:[c.chqNo?'#'+c.chqNo:'',isPend?'Pending → counts as advance':'Collected '+c.settledOn,c.shortfall>0?'Shortfall '+fR(c.shortfall):''].filter(Boolean).join(' · '),credit:isPend?0:Number(c.ret),debit:isPend?Number(c.expected||c.ret):0,status:c.status});});
   entries.sort((a,b)=>b.date.localeCompare(a.date));
   const tS=sal.filter(s=>s.sid===member.id).reduce((s,x)=>s+Number(x.net),0),tCp=sal.filter(s=>s.sid===member.id).reduce((s,x)=>s+Number(x.cp||0),0),tA=adv.filter(a=>a.staffId===member.id).reduce((s,a)=>s+Number(a.amount),0),tQ=chq.filter(c=>c.staffId===member.id&&c.status==='settled').reduce((s,c)=>s+Number(c.ret),0);
