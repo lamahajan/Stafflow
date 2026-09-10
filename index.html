@@ -2169,8 +2169,8 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
           </div>
           <div style=${{display:'flex',alignItems:'center',gap:10}}>
             <div style=${{textAlign:'right'}}><div style=${{fontSize:16,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(total)}</div><div style=${{fontSize:10,color:T.sub}}>${sAdv.length+sChq.length} item${sAdv.length+sChq.length>1?'s':''}</div></div>
-            ${sAdv.length>0&&html`<button onClick=${e=>{e.stopPropagation();openRepay(s.id);}} title="Mark Cash Advance Repaid" style=${{background:'#0071e3',border:'none',borderRadius:7,padding:'5px 8px',cursor:'pointer',display:'flex',alignItems:'center',gap:3,flexShrink:0}}>
-              <${Ico} n="chk" s=${11} c="#fff"/><span style=${{fontSize:10,fontWeight:800,color:'#fff'}}>Repaid</span>
+            ${sAdv.length>0&&html`<button onClick=${e=>{e.stopPropagation();openRepay(s.id);}} title="Cash Payment" style=${{width:28,height:28,background:'#0071e3',border:'none',borderRadius:7,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <${Ico} n="chk" s=${14} c="#fff"/>
             </button>`}
             <${Ico} n=${isOpen?'up':'dn'} s=${16} c=${T.sub}/>
           </div>
@@ -2204,7 +2204,7 @@ function PgAdv({staff,adv,setAdv,chq,ctx}){
       <div style=${{background:T.bg,borderRadius:10,padding:'9px 11px'}}><div style=${{fontSize:12,fontWeight:700,color:T.txt}}>${s?.name||'—'}</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>Total outstanding cash advances: ${fR(outstanding)}</div></div>
       <${Inp} T=${T} label="Amount received in cash (₹) *" type="number" value=${repayAmt} onChange=${e=>setRepayAmt(e.target.value)} placeholder="e.g. 2000"/>
       <div style=${{fontSize:11,color:T.sub}}>Applied to the oldest pending advance first, then the next, and so on until the amount is used up.</div>
-      <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setRepayStaffId(null)}/><${Btn} T=${T} full ch="Confirm Repaid" onClick=${confirmRepay}/></div>
+      <div style=${{display:'flex',gap:10}}><${Btn} T=${T} v="sec" full ch="Cancel" onClick=${()=>setRepayStaffId(null)}/><${Btn} T=${T} full ch="Confirm" onClick=${confirmRepay}/></div>
     </div><//>`;})()}
   </div>`;
 }
