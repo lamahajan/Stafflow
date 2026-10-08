@@ -177,6 +177,7 @@ const epfEmpBase=(rate,st)=>{st=st||{};const ceil=Number(st.epfEmpWageCeil)||0;r
 const fR=n=>'₹'+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
 // PDF-safe rupee formatter — jsPDF's built-in helvetica font has no ₹ glyph (it rendered as a broken "¶"),
 // so every PDF (slip, reports, ledger, cheques) uses "Rs." instead of the ₹ symbol.
+try{window.jspdf.jsPDF.autoTableSetDefaults({margin:{top:42,left:14,right:14,bottom:16}});}catch(e){}
 const fRp=n=>'Rs. '+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
 // Total statutory deduction (EPF Employee+Employer, EPS, ESIC Employee+Employer) — based on Pay as per Record,
 // but only counting the components this category actually uses (via its Margin or Cheque Amount chip selections).
@@ -414,11 +415,13 @@ function applyReportColorMode(cfg){
 // Draw a nice rounded rectangle helper
 function rrect(doc,x,y,w,h,r,fill,stroke){doc.setFillColor(...fill);if(stroke)doc.setDrawColor(...stroke);doc.roundedRect(x,y,w,h,r,r,stroke?'FD':'F');}
 function pdfPage(doc,type,title,meta,pn,tp){
+  // Header band is 38mm tall: keep every table's continuation pages BELOW it (default top margin 10mm made the first rows of page 2+ hide under the title).
+  try{doc.autoTableSetDefaults({margin:{top:42,left:14,right:14,bottom:16}});}catch(e){}
   const W=210,H=297,ds=new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
   // Purple left accent bar
   doc.setFillColor(...PRP);doc.rect(0,0,5,H,'F');
   // Header background
-  doc.setFillColor(...LGR);doc.rect(5,0,W-5,38,'F');
+  doc.setFillColor(...LGR);doc.rect(5,0,W-5,34,'F');
   // App name
   doc.setFontSize(15);doc.setFont('helvetica','bold');doc.setTextColor(...PRP);doc.text('StaffFlow',14,13);
   doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(...GRY);doc.text('Agency Management System',14,19);
@@ -449,7 +452,8 @@ function pdfPage(doc,type,title,meta,pn,tp){
   }
   // Bottom separator
   doc.setDrawColor(...DGR);doc.setLineWidth(0.2);doc.line(14,32,W-14,32);
-  // Footer
+  // Footer (clear first so a re-drawn page number never overlaps the earlier one)
+  doc.setFillColor(255,255,255);doc.rect(5,H-14,W-5,14,'F');
   doc.setFontSize(5.5);doc.setFont('helvetica','normal');doc.setTextColor(...GRY);
   doc.text('Confidential · Internal use only · StaffFlow Agency Management System · Generated '+ds,14,H-6);
   doc.setFont('helvetica','bold');
@@ -998,28 +1002,56 @@ async function genPDF(mon,yr,monSal,allAdv,allChq,staff,msgFn,cfg){
 const ymd2=(y,m,d)=>y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
 const fDmy=d=>d?String(d).slice(0,10).split('-').reverse().join('-'):'—';
 // Real salary date: saved paidOn; for old records fall back to the date its auto cheque-return was created (= processing day), else month-end.
+function salEst(s,chq){if(s&&s.paidOn)return false;const k='Auto — '+mName(s.mon,s.yr);return !(chq||[]).some(x=>x.staffId===s.sid&&x.autoCreated&&x.note===k&&x.date);}
+// Real salary date: saved paidOn; old records → date its auto cheque-return was created (= processing day);
+// otherwise estimate = 1st of the NEXT month (salary is processed after month end), never in the future.
 function salDate(s,chq){
   if(s&&s.paidOn)return s.paidOn;
   const k='Auto — '+mName(s.mon,s.yr);
   const c=(chq||[]).find(x=>x.staffId===s.sid&&x.autoCreated&&x.note===k&&x.date);
   if(c)return c.date;
-  return ymd2(s.yr,s.mon,new Date(s.yr,s.mon,0).getDate());
+  const d=ymd2(s.mon===12?s.yr+1:s.yr,s.mon===12?1:s.mon+1,1),t=today();
+  return d>t?t:d;
 }
 function chqViaSalary(c,mine,chq){return c.settledBy==='salary'||(!c.settledBy&&mine.some(s=>(Number(s.advDed)||0)>0&&salDate(s,chq)===c.settledOn));}
+const mTot=t=>t.cp>0?fRp(t.margin):'N/A';
+const mRow=s=>Number(s.cp)>0?fRp(s.margin||0):'N/A';
+function pdfNotes(doc,y,lines){
+  if(!lines.length)return y;
+  if(y>262){doc.addPage();y=44;}
+  doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(...AMB);
+  lines.forEach(l=>{const t=doc.splitTextToSize(l,182);doc.text(t,14,y);y+=t.length*3.4+1.5;});
+  return y;
+}
 function buildAcct(member,sal,adv,chq,fy){
   const mine=sal.filter(s=>s.sid===member.id);
-  const all=[];
-  mine.forEach(s=>{const rec=Number(s.advDed)||0;if(rec>0)all.push({date:salDate(s,chq),fy:getFY(new Date(s.yr,s.mon-1,1)),label:'Recovered from Salary — '+mName(s.mon,s.yr),dr:0,cr:rec});});
+  const sd=s=>salDate(s,chq);
+  const all=[];let salCr=0;
   adv.filter(a=>a.staffId===member.id).forEach(a=>{
-    const orig=Number(a.origAmount||a.amount)||0;
+    const orig=advGiven(a),rem=Number(a.amount)||0,cash=Number(a.cashRec)||0;
     all.push({date:a.date,fy:getFY(a.date),label:'Advance Given'+(a.note?' — '+a.note:''),dr:orig,cr:0});
-    if(Number(a.cashRec)>0)all.push({date:a.cashRecOn||a.date,fy:getFY(a.cashRecOn||a.date),label:'Cash Repayment (part) — Advance',dr:0,cr:Number(a.cashRec)});
-    if(a.status==='repaid')all.push({date:a.repaidOn||a.date,fy:getFY(a.repaidOn||a.date),label:'Cash Repayment — Advance',dr:0,cr:Number(a.amount)||0});
+    if(cash>0){const d=a.cashRecOn||a.date;all.push({date:d,fy:getFY(d),label:'Cash Repayment (part) — Advance',dr:0,cr:cash});}
+    if(a.status==='repaid'){const d=a.repaidOn||a.date;all.push({date:d,fy:getFY(d),label:'Cash Repayment — Advance',dr:0,cr:rem});}
+    // salary recovery = what was deducted earlier in parts + the remaining amount if now fully 'deducted'
+    // (advances cleared against a cheque over-collection are credited through that cheque row instead)
+    if(!/overcollection/.test(a.pNote||'')){
+      const part=Math.max(0,orig-rem-cash),tot=part+(a.status==='deducted'?rem:0);
+      if(tot>0){
+        let d;
+        if(a.status==='deducted')d=advRecDate(a,sal,chq)||a.date;
+        else{const nx=mine.filter(x=>(Number(x.advDed)||0)>0&&sd(x)>=a.date).sort((x,y)=>sd(x).localeCompare(sd(y)))[0];d=nx?sd(nx):a.date;}
+        all.push({date:d,fy:getFY(d),label:'Recovered from Salary — Advance'+(a.note?' ('+a.note+')':''),dr:0,cr:tot});salCr+=tot;
+      }
+    }
   });
   chq.filter(c=>c.staffId===member.id).forEach(c=>{
     const exp=Number(c.expected||c.chqAmt||c.ret)||0;
     all.push({date:c.date,fy:getFY(c.date),label:'Cheque Return Due — '+c.client+(c.chqNo?' (#'+c.chqNo+')':''),dr:exp,cr:0});
-    if(c.status==='settled'&&!chqViaSalary(c,mine,chq)){const d=c.settledOn||c.date;all.push({date:d,fy:getFY(d),label:'Cheque Collected — '+c.client+(c.chqNo?' (#'+c.chqNo+')':''),dr:0,cr:(Number(c.ret)||0)+(Number(c.shortfall)||0)});}
+    if(c.status==='settled'){
+      const d=c.settledOn||c.date;
+      if(chqViaSalary(c,mine,chq)){all.push({date:d,fy:getFY(d),label:'Cheque Return Adjusted in Salary — '+c.client,dr:0,cr:exp});salCr+=exp;}
+      else all.push({date:d,fy:getFY(d),label:'Cheque Collected — '+c.client+(c.chqNo?' (#'+c.chqNo+')':''),dr:0,cr:(Number(c.ret)||0)+(Number(c.shortfall)||0)});
+    }
   });
   all.sort((a,b)=>a.date.localeCompare(b.date)||((b.dr>0)-(a.dr>0)));
   const opening=all.filter(r=>r.fy<fy).reduce((x,r)=>x+r.dr-r.cr,0);
@@ -1027,11 +1059,14 @@ function buildAcct(member,sal,adv,chq,fy){
   const rows=all.filter(r=>r.fy===fy).map(r=>{bal+=r.dr-r.cr;return{...r,bal};});
   const allBal=all.reduce((x,r)=>x+r.dr-r.cr,0);
   const months=[];for(let m=4;m<=12;m++)months.push({mon:m,yr:fy});for(let m=1;m<=3;m++)months.push({mon:m,yr:fy+1});
-  const ms=months.map(({mon,yr})=>{const s=mine.find(x=>x.mon===mon&&x.yr===yr);return{mon,yr,s,date:s?salDate(s,chq):null};});
+  const ms=months.map(({mon,yr})=>{const s=mine.find(x=>x.mon===mon&&x.yr===yr);return{mon,yr,s,date:s?sd(s):null};});
   const t={gross:0,rec:0,net:0,cp:0,margin:0};
   ms.forEach(({s})=>{if(!s)return;t.gross+=Number(s.gross)||0;t.rec+=Number(s.advDed)||0;t.net+=Number(s.net)||0;t.cp+=Number(s.cp)||0;t.margin+=Number(s.margin)||0;});
   const pend=adv.filter(a=>a.staffId===member.id&&a.status==='pending').reduce((x,a)=>x+Number(a.amount),0)+chq.filter(c=>c.staffId===member.id&&c.status==='pending').reduce((x,c)=>x+Number(c.expected||c.ret),0);
-  return{mine,rows,opening,closing:bal,allBal,months:ms,t,pend};
+  // salary slips say X was deducted for advances/cheques, but only Y is backed by an advance/cheque record
+  const unmatched=mine.reduce((x,q)=>x+(Number(q.advDed)||0),0)-salCr;
+  const anyEst=ms.some(({s})=>s&&salEst(s,chq));
+  return{mine,rows,opening,closing:bal,allBal,months:ms,t,pend,unmatched,anyEst};
 }
 const balTxt=b=>fRp(Math.abs(b))+(b<0?' Cr':' Dr');
 async function genAnnualPDF(member,sal,adv,chq,fy,msgFn,cfg){
@@ -1040,14 +1075,14 @@ async function genAnnualPDF(member,sal,adv,chq,fy,msgFn,cfg){
   const{jsPDF}=window.jspdf,doc=new jsPDF('p','mm','a4'),fyStr=fyLbl(fy);
   const ds=new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'});
   const ac=buildAcct(member,sal,adv,chq,fy),t=ac.t;
-  const rows=ac.months.map(({mon,yr,s,date})=>s?[mName(mon,yr),fDmy(date),String(s.abs),fRp(s.cp||0),fRp(s.gross),Number(s.advDed)>0?fRp(s.advDed):'Nil',fRp(s.net),fRp(s.margin||0),s.paid?'PAID':'PENDING']:[mName(mon,yr),'—','—','—','—','—','—','—','—']);
+  const rows=ac.months.map(({mon,yr,s,date})=>s?[mName(mon,yr),fDmy(date)+(salEst(s,chq)?'*':''),String(s.abs),fRp(s.cp||0),fRp(s.gross),Number(s.advDed)>0?fRp(s.advDed):'Nil',fRp(s.net),mRow(s),s.paid?'PAID':'PENDING']:[mName(mon,yr),'—','—','—','—','—','—','—','—']);
   hdr(doc,fyStr,member,ds,1,1);
   let y=35;
-  y=summBox(doc,[['Client Income',fRp(t.cp),BLU_],['Gross Salary',fRp(t.gross),PRP],['Adv. Recovered',fRp(t.rec),RED_],['Net Salary Paid',fRp(t.net),RED_],['Agency Margin',fRp(t.margin),t.margin>=0?GRN_:RED_]],y);
+  y=summBox(doc,[['Client Income',fRp(t.cp),BLU_],['Gross Salary',fRp(t.gross),PRP],['Adv. Recovered',fRp(t.rec),RED_],['Net Salary Paid',fRp(t.net),RED_],['Agency Margin',mTot(t),t.margin>=0?GRN_:RED_]],y);
   if(Math.abs(ac.closing)>0.5){doc.setFillColor(255,247,237);doc.setDrawColor(251,191,36);doc.setLineWidth(0.3);doc.roundedRect(14,y,182,8,1.5,1.5,'FD');doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(...AMB);doc.text('CLOSING DUES (STAFF OWES EMPLOYER) AS OF '+ds+': '+balTxt(ac.closing),17,y+5.2);y+=11;}
   y=secHead(doc,'Month-wise Salary Account (Employer Books) — '+fyStr,y);
   doc.autoTable({startY:y,head:[['Month','Processed On','Absent','Client Income','Gross Salary','Adv. Recovered','Net Paid','Margin','Status']],body:rows,
-    foot:[['ANNUAL TOTAL','—','—',fRp(t.cp),fRp(t.gross),fRp(t.rec),fRp(t.net),fRp(t.margin),'—']],
+    foot:[['ANNUAL TOTAL','—','—',fRp(t.cp),fRp(t.gross),fRp(t.rec),fRp(t.net),mTot(t),'—']],
     styles:{...TS,fontSize:6.4,cellPadding:2.6},headStyles:{...TH2,fontSize:6.6,cellPadding:3},alternateRowStyles:{...TA},footStyles:{...TF,fontSize:6.6},
     columnStyles:{0:{cellWidth:24},1:{halign:'center',cellWidth:19},2:{halign:'center',cellWidth:11},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'},7:{halign:'right'},8:{halign:'center',cellWidth:15}},
     didParseCell:d=>{if(d.section==='body'&&d.column.index===8){d.cell.styles.textColor=d.cell.raw==='PAID'?GRN_:d.cell.raw==='PENDING'?RED_:GRY;d.cell.styles.fontStyle='bold';}if(d.section==='foot'){d.cell.styles.textColor=BLK;}}});
@@ -1079,6 +1114,10 @@ async function genAnnualPDF(member,sal,adv,chq,fy,msgFn,cfg){
   doc.autoTable({startY:yy,head:[['Particulars','Amount']],body:[['Opening Balance (B/F from previous FY)',balTxt(ac.opening)],['Add: Advances given + Cheque returns due (Debit)',fRp(dSum)],['Less: Recovered via salary / cash / cheque collected (Credit)',fRp(cSum)],['Closing Dues — Staff owes Employer',balTxt(ac.closing)]],
     styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},columnStyles:{1:{halign:'right',fontStyle:'bold'}},
     didParseCell:d=>{if(d.section==='body'&&d.row.index===3){d.cell.styles.fillColor=[243,240,255];d.cell.styles.fontStyle='bold';}}});
+  const notes=[];
+  if(Math.abs(ac.unmatched)>0.5)notes.push('NOTE: Rs. '+Math.abs(ac.unmatched).toLocaleString('en-IN',{minimumFractionDigits:2})+(ac.unmatched>0?' was deducted in salary for advances/cheques':' of advance/cheque recovery')+' but is not backed by a matching advance/cheque record (record deleted or edited later). Please review.');
+  if(ac.anyEst)notes.push('* Processed date is estimated (not recorded for older salary entries). Set the exact date via Ledger > Edit salary.');
+  pdfNotes(doc,doc.lastAutoTable.finalY+5,notes);
   const pg=doc.internal.getNumberOfPages();for(let i=1;i<=pg;i++){doc.setPage(i);hdr(doc,fyStr,member,ds,i,pg);}
   doc.save('Annual_'+member.name.replace(/\s+/g,'_')+'_'+fyStr.replace(/\s/g,'_')+'.pdf');msgFn('Annual statement downloaded ✓');}catch(e){console.error(e);msgFn('Annual PDF failed','err');}
 }
@@ -1093,7 +1132,7 @@ async function genLedgerPDF(member,sal,adv,chq,aFY,msgFn,cfg){
   const head=(i,n)=>pdfPage(doc,'STAFF LEDGER',member.name,['Employee: '+member.name,'Role: '+member.role,'FY: '+fyStr,'Generated: '+ds],i,n);
   head(1,1);
   let y=35;
-  y=summBox(doc,[['Client Income (Cr)',fRp(t.cp),BLU_],['Gross Salary (Dr)',fRp(t.gross),PRP],['Net Salary Paid',fRp(t.net),RED_],['Agency Margin',fRp(t.margin),t.margin>=0?GRN_:RED_],['Closing Dues',balTxt(ac.closing),ac.closing>0?AMB:GRN_]],y);
+  y=summBox(doc,[['Client Income (Cr)',fRp(t.cp),BLU_],['Gross Salary (Dr)',fRp(t.gross),PRP],['Net Salary Paid',fRp(t.net),RED_],['Agency Margin',mTot(t),t.margin>=0?GRN_:RED_],['Closing Dues',balTxt(ac.closing),ac.closing>0?AMB:GRN_]],y);
   y=secHead(doc,'Staff Dues Ledger (Employer Books) — '+fyStr+'  |  Dr = staff owes employer',y);
   const body=[[ac.rows.length?fDmy(ac.rows[0].date):'—','Opening Balance (B/F from previous FY)','—','—',balTxt(ac.opening)],...ac.rows.map(r=>[fDmy(r.date),r.label,r.dr>0?fRp(r.dr):'—',r.cr>0?fRp(r.cr):'—',balTxt(r.bal)])];
   const dS=ac.rows.reduce((x,r)=>x+r.dr,0),cS=ac.rows.reduce((x,r)=>x+r.cr,0);
@@ -1107,11 +1146,15 @@ async function genLedgerPDF(member,sal,adv,chq,aFY,msgFn,cfg){
   if(sr.length){if(y2>225){doc.addPage();y2=35;}
     y2=secHead(doc,'Salary & Income Register — by Processed Date — '+fyStr,y2);
     doc.autoTable({startY:y2,head:[['Processed On','Salary Month','Client Income (Cr)','Gross Salary (Dr)','Adv. Recovered','Net Paid','Margin','Status']],
-      body:sr.map(({s,date})=>[fDmy(date),mName(s.mon,s.yr),fRp(s.cp||0),fRp(s.gross),Number(s.advDed)>0?fRp(s.advDed):'Nil',fRp(s.net),fRp(s.margin||0),s.paid?'PAID':'PENDING']),
-      foot:[['','TOTAL',fRp(t.cp),fRp(t.gross),fRp(t.rec),fRp(t.net),fRp(t.margin),'']],
+      body:sr.map(({s,date})=>[fDmy(date)+(salEst(s,chq)?'*':''),mName(s.mon,s.yr),fRp(s.cp||0),fRp(s.gross),Number(s.advDed)>0?fRp(s.advDed):'Nil',fRp(s.net),mRow(s),s.paid?'PAID':'PENDING']),
+      foot:[['','TOTAL',fRp(t.cp),fRp(t.gross),fRp(t.rec),fRp(t.net),mTot(t),'']],
       styles:{...TS,fontSize:6.4,cellPadding:2.6},headStyles:{...TH2,fontSize:6.4,cellPadding:3},alternateRowStyles:{...TA},footStyles:{...TF,fontSize:6.6},
       columnStyles:{0:{cellWidth:19,halign:'center'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'},7:{halign:'center',cellWidth:15}},
       didParseCell:d=>{if(d.section==='body'&&d.column.index===7){d.cell.styles.textColor=d.cell.raw==='PAID'?GRN_:RED_;d.cell.styles.fontStyle='bold';}if(d.section==='foot')d.cell.styles.textColor=BLK;}});}
+  const notes=[];
+  if(Math.abs(ac.unmatched)>0.5)notes.push('NOTE: Rs. '+Math.abs(ac.unmatched).toLocaleString('en-IN',{minimumFractionDigits:2})+(ac.unmatched>0?' was deducted in salary for advances/cheques':' of advance/cheque recovery')+' but is not backed by a matching advance/cheque record (record deleted or edited later). Please review.');
+  if(ac.anyEst)notes.push('* Processed date is estimated (not recorded for older salary entries). Set the exact date via Ledger > Edit salary.');
+  pdfNotes(doc,doc.lastAutoTable.finalY+5,notes);
   const pg=doc.internal.getNumberOfPages();for(let i=1;i<=pg;i++){doc.setPage(i);head(i,pg);}
   doc.save('Ledger_'+member.name.replace(/\s+/g,'_')+'_'+fyStr.replace(/\s/g,'_')+'.pdf');msgFn('Ledger PDF downloaded ✓');}catch(e){console.error(e);msgFn('Ledger PDF failed','err');}
 }
@@ -2545,8 +2588,9 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
       <${RR} T=${T} label="Gross Salary Cost (Dr)" value=${fR(ac.t.gross)} accent=${T.red} border=${true}/>
       <${RR} T=${T} label="Adv./Cheque Recovered from Salary" value=${'−'+fR(ac.t.rec)} border=${true}/>
       <${RR} T=${T} label="Net Salary Paid" value=${fR(ac.t.net)} accent=${T.red} border=${true}/>
-      <${RR} T=${T} label="Agency Margin" value=${fR(ac.t.margin)} accent=${ac.t.margin>=0?T.grn:T.red} border=${true}/>
+      <${RR} T=${T} label="Agency Margin" value=${ac.t.cp>0?fR(ac.t.margin):'N/A'} accent=${ac.t.margin>=0?T.grn:T.red} border=${true}/>
       <${RR} T=${T} label="Closing Dues (Staff owes Employer)" value=${fR(Math.abs(ac.closing))+(ac.closing<0?' Cr':' Dr')} bold accent=${ac.closing>0?T.yel:T.grn} border=${true}/>
+      ${Math.abs(ac.unmatched)>0.5&&html`<${RR} T=${T} label="⚠ Salary deducted, no advance record" value=${fR(ac.unmatched)} accent=${T.yel} border=${true}/>`}
     </div>
     <div style=${{fontSize:10,fontWeight:800,color:T.sub,letterSpacing:.8,marginBottom:10}}>ALL TRANSACTIONS</div>
     ${openingBal>0&&html`<div style=${{background:T.yel+'14',border:`1px solid ${T.yel}33`,borderRadius:12,padding:'10px 13px',marginBottom:12}}>
