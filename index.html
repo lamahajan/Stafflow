@@ -2145,9 +2145,9 @@ async function genAdvancesExcel(adv,staff,filterCat,msgFn,sal,chq){
   try{
     if(typeof ExcelJS==='undefined')return msgFn('ExcelJS library not loaded','err');
     sal=sal||[];chq=chq||[];
-    const list=(filterCat&&filterCat!=='ALL'?adv.filter(a=>{const s=staff.find(x=>x.id===a.staffId);return s&&s.role===filterCat;}):adv).slice()
+    const list=(filterCat&&filterCat!=='ALL'?adv.filter(a=>{const s=staff.find(x=>x.id===a.staffId);return s&&s.role===filterCat;}):adv).filter(a=>a.status==='pending').slice()   // settled (deducted/repaid) advances are left out of the report
       .sort((x,y)=>((staff.find(q=>q.id===x.staffId)?.name||'').localeCompare(staff.find(q=>q.id===y.staffId)?.name||''))||String(x.date).localeCompare(String(y.date)));
-    if(!list.length)return msgFn('No advances to export','err');
+    if(!list.length)return msgFn('No pending advances to export','err');
     const wb=new ExcelJS.Workbook(),ws=wb.addWorksheet('Advances');
     ws.columns=[6,26,16,12,30,15,15,15,12,24].map(w=>({width:w}));
     ws.addRow(['Sr.','Staff Name','Role','Date','Note','Amount Given','Recovered','Pending','Status','Recovered On']).eachCell(c=>{c.font={size:10,bold:true};});
@@ -2177,15 +2177,12 @@ async function genAdvancesPDF(adv,staff,cats,filterCat,msgFn,cfg,sal,chq){
     const ds=new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
     const TS={fontSize:8,cellPadding:3,font:'helvetica'},TH2={fillColor:PRP,textColor:[255,255,255],fontStyle:'bold',fontSize:8},TA={fillColor:ALTROW},TF={fillColor:MID,textColor:BLK,fontStyle:'bold'};
     const label=filterCat&&filterCat!=='ALL'?filterCat+' — Advances':'All Advances Report';
-    pdfPage(doc,'CASH ADVANCES',label,['Category: '+(filterCat==='ALL'?'All':filterCat),'Total Records: '+adv.length,'Generated: '+ds,'Date: '+ds],1,1);
+    pdfPage(doc,'CASH ADVANCES',label,['Category: '+(filterCat==='ALL'?'All':filterCat),'Pending Records: '+adv.filter(a=>a.status==='pending').length,'Generated: '+ds,'Date: '+ds],1,1);
     let y=35;
     const filtered=filterCat&&filterCat!=='ALL'?adv.filter(a=>{const s=staff.find(x=>x.id===a.staffId);return s&&s.role===filterCat;}):adv;
     const pending=filtered.filter(a=>a.status==='pending');
-    const recovered=filtered.filter(a=>a.status==='deducted'||a.status==='repaid');
     const pAmt=pending.reduce((s,a)=>s+Number(a.amount),0);
-    const rAmt=recovered.reduce((s,a)=>s+advGiven(a),0);
-    const partRec=pending.reduce((x,a)=>x+Math.max(0,advGiven(a)-Number(a.amount)),0);
-    y=summBox(doc,[['Pending',fRp(pAmt),AMB],['Recovered',fRp(rAmt+partRec),GRN_],['Total Given',fRp(pAmt+rAmt+partRec),PRP]],y);
+    y=summBox(doc,[['Pending Amount',fRp(pAmt),AMB],['Pending Entries',String(pending.length),PRP]],y);
     if(pending.length){
       y=secHead(doc,'Pending Advances ('+pending.length+') — Grouped by Staff',y);
       const{rows,subtotalRows}=groupAdvRowsByStaff(pending,staff,false,sal,chq);
@@ -2196,17 +2193,8 @@ async function genAdvancesPDF(adv,staff,cats,filterCat,msgFn,cfg,sal,chq){
         foot:[['','','','','TOTAL',fRp(pAmt)]],footStyles:{...TF},
         didParseCell:d=>{if(d.section==='body'&&subtotalRows.includes(d.row.index)){d.cell.styles.fillColor=MID;d.cell.styles.textColor=BLK;d.cell.styles.fontStyle='bold';}}});
       y=doc.lastAutoTable.finalY+8;}
-    if(recovered.length){
-      if(y>230){doc.addPage();pdfPage(doc,'CASH ADVANCES',label,[],1,1);y=35;}
-      y=secHead(doc,'Recovered Advances ('+recovered.length+') — Grouped by Staff',y);
-      const{rows,subtotalRows}=groupAdvRowsByStaff(recovered,staff,true,sal,chq);
-      doc.autoTable({startY:y,head:[['Sr.','Staff Name','Role','Date','Note','Amount (₹)','Deducted/Repaid On']],
-        body:rows,
-        styles:{...TS},headStyles:{...TH2},alternateRowStyles:{...TA},rowPageBreak:'avoid',
-        columnStyles:{0:{cellWidth:12,halign:'center',overflow:'visible'},5:{halign:'right'},6:{halign:'center',cellWidth:30}},
-        foot:[['','','','','TOTAL',fRp(rAmt),'']],footStyles:{...TF},
-        didParseCell:d=>{if(d.section==='body'&&subtotalRows.includes(d.row.index)){d.cell.styles.fillColor=MID;d.cell.styles.textColor=BLK;d.cell.styles.fontStyle='bold';}}});}
-    const pg=doc.internal.getNumberOfPages();for(let i=1;i<=pg;i++){doc.setPage(i);pdfPage(doc,'CASH ADVANCES',label,['Category: '+(filterCat==='ALL'?'All':filterCat),'Records: '+filtered.length,'Generated: '+ds,'Pending: '+fRp(pAmt)],i,pg);}
+    if(!pending.length){doc.setFontSize(10);doc.setTextColor(100);doc.text('No pending advances.',14,y+6);}
+    const pg=doc.internal.getNumberOfPages();for(let i=1;i<=pg;i++){doc.setPage(i);pdfPage(doc,'CASH ADVANCES',label,['Category: '+(filterCat==='ALL'?'All':filterCat),'Records: '+pending.length,'Generated: '+ds,'Pending: '+fRp(pAmt)],i,pg);}
     doc.save('StaffFlow_Advances_'+(filterCat==='ALL'?'All':filterCat).replace(/\s+/g,'_')+'_'+new Date().toISOString().slice(0,10)+'.pdf');
     msgFn('Advances PDF downloaded ✓');}catch(e){console.error(e);msgFn('PDF failed','err');}
 }
