@@ -172,6 +172,22 @@ const uid=()=>Math.random().toString(36).slice(2,10);
 // the "current" month for default-selection / highlighting purposes is treated as the PREVIOUS calendar month.
 const effTargetMY=d=>{let m=d.getMonth()+1,y=d.getFullYear();if(d.getDate()<=10){m-=1;if(m<1){m=12;y-=1;}}return{m,y};};
 const today=()=>new Date().toISOString().slice(0,10);
+// ── Advance recovery tracking ─────────────────────────────────────────────────
+// Every salary deduction is logged in advance.recs = [{t:'sal',salId,amt}] so that deleting that salary
+// gives back exactly the amount it had recovered (partial or full).
+const advDeduct=(list,staffId,amt,salId,yr,mon)=>{let rem=amt;return list.map(a=>{if(a.staffId!==staffId||a.status!=='pending'||rem<=0)return a;const cur=Number(a.amount),tk=Math.min(rem,cur);rem-=tk;const recs=[...(a.recs||[]),{t:'sal',salId,amt:tk}];return tk>=cur?{...a,status:'deducted',dedOn:`${yr}-${String(mon).padStart(2,'0')}`,dedDate:today(),recs}:{...a,origAmount:a.origAmount||a.amount,amount:cur-tk,pNote:`₹${tk.toFixed(0)} deducted`,recs};});};
+const advRestoreForSal=(list,staffId,salId,monKey)=>{const changed=[];const out=list.map(a=>{if(a.staffId!==staffId)return a;
+  const mine=(a.recs||[]).filter(r=>r.t==='sal'&&r.salId===salId);
+  if(mine.length){const back=mine.reduce((x,r)=>x+(Number(r.amt)||0),0);const recs=(a.recs||[]).filter(r=>!(r.t==='sal'&&r.salId===salId));
+    const n={...a,recs,dedOn:undefined,dedDate:undefined};
+    if(a.status==='pending')n.amount=(Number(a.amount)||0)+back;
+    else if(a.status==='repaid'){n.cashRec=(Number(a.cashRec)||0)+(Number(a.amount)||0);n.cashRecOn=a.repaidOn||a.cashRecOn;n.repaidOn=undefined;n.status='pending';n.amount=back;}
+    else{n.status='pending';n.amount=back;}
+    n.pNote=recs.length?`₹${Number(recs[recs.length-1].amt).toFixed(0)} deducted`:(/repaid in cash/.test(a.pNote||'')?a.pNote:undefined);
+    changed.push({id:a.id,note:a.note,amount:back});return n;}
+  // old records (made before recs existed): only a fully-deducted advance of that month can be reversed
+  if(a.status==='deducted'&&a.dedOn===monKey&&!(a.recs&&a.recs.length)){changed.push({id:a.id,note:a.note,amount:Number(a.amount)||0});return{...a,status:'pending',dedOn:undefined,dedDate:undefined,pNote:undefined};}
+  return a;});return{list:out,changed};};
 // EPF Employee (12%) base — capped at the configured EPF Employee Wage Ceiling if one is set (0/blank = no cap, full Pay as per Record).
 const epfEmpBase=(rate,st)=>{st=st||{};const ceil=Number(st.epfEmpWageCeil)||0;return ceil>0?Math.min(Number(rate)||0,ceil):(Number(rate)||0);};
 const fR=n=>'₹'+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1558,7 +1574,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
     let newSal=[...sal,entry];
     let newAdv=[...adv], newChq=[...chq], rem=advAmt;
     newChq=newChq.map(c=>{if(c.staffId!==s.id||c.status!=='pending'||rem<=0)return c;const tk=Math.min(rem,Number(c.expected||c.ret));if(tk<(Number(c.expected||c.ret)))return c;rem-=tk;return{...c,status:'settled',settledOn:today(),settledBy:'salary',shortfall:0};});
-    newAdv=newAdv.map(a=>{if(a.staffId!==s.id||a.status!=='pending'||rem<=0)return a;const tk=Math.min(rem,Number(a.amount));rem-=tk;return tk>=Number(a.amount)?{...a,status:'deducted',dedOn:`${yr}-${String(mon).padStart(2,'0')}`,dedDate:today()}:{...a,origAmount:a.origAmount||a.amount,amount:Number(a.amount)-tk,pNote:`₹${tk.toFixed(0)} deducted`};});
+    newAdv=advDeduct(newAdv,s.id,rem,entry.id,yr,mon);
     if(cpN>0&&margin>0){newChq=[...newChq,{id:uid(),staffId:s.id,client:s.client||'',chqAmt:String(margin),ret:String(margin),expected:margin,shortfall:0,date:today(),chqNo:'',note:`Auto — ${mName(mon,yr)}`,status:'pending',autoCreated:true}];}
     return{newSal,newAdv,newChq};
   };
@@ -1580,7 +1596,7 @@ function PgBulk({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
       curSal=[...curSal,entry];
       let rem=advAmt;
       curChq=curChq.map(c=>{if(c.staffId!==s.id||c.status!=='pending'||rem<=0)return c;const tk=Math.min(rem,Number(c.expected||c.ret));if(tk<(Number(c.expected||c.ret)))return c;rem-=tk;return{...c,status:'settled',settledOn:today(),settledBy:'salary',shortfall:0};});
-      curAdv=curAdv.map(a=>{if(a.staffId!==s.id||a.status!=='pending'||rem<=0)return a;const tk=Math.min(rem,Number(a.amount));rem-=tk;return tk>=Number(a.amount)?{...a,status:'deducted',dedOn:`${yr}-${String(mon).padStart(2,'0')}`,dedDate:today()}:{...a,origAmount:a.origAmount||a.amount,amount:Number(a.amount)-tk,pNote:`₹${tk.toFixed(0)} deducted`};});
+      curAdv=advDeduct(curAdv,s.id,rem,entry.id,yr,mon);
       if(cpN>0&&margin>0){curChq=[...curChq,{id:uid(),staffId:s.id,client:s.client||'',chqAmt:String(margin),ret:String(margin),expected:margin,shortfall:0,date:today(),chqNo:'',note:`Auto — ${mName(mon,yr)}`,status:'pending',autoCreated:true}];}
     }
     setSal(curSal);setAdv(curAdv);setChq(curChq);
@@ -1842,10 +1858,10 @@ function PgSal({staff,adv,setAdv,sal,setSal,chq,setChq,aFY,ctx}){
   const activeWD=leftWD||joinWD;
   const process=()=>{
     if(!proc)return;const{pDay,absDed,gross,advAmt,net,mDedAmt,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}=calc(proc,abs,advD,activeWD);const cpN=Number(cpV)||0,margin=roundAmt(cpN-gross+marginAddOn(proc.role,{epfEmp:epfEmpAmt,epfPF:epfPFAmt,eps:epsAmt,esicEmp:esicEmpAmt,esicEr:esicErAmt},cfg)+advAmt,cfg.statutory);
-    setSal([...sal,{id:uid(),sid:proc.id,name:proc.name,role:proc.role,client:proc.client||'',mon,yr,abs:parseFloat(abs)||0,mRate:proc.mRate,recPay:proc.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,cp:cpN,margin,note,paid:true,paidOn:today(),joinWD:joinWD||null,leftWD:leftWD||null,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}]);
+    const salId=uid();setSal([...sal,{id:salId,sid:proc.id,name:proc.name,role:proc.role,client:proc.client||'',mon,yr,abs:parseFloat(abs)||0,mRate:proc.mRate,recPay:proc.recPay||'',mDed:mDedAmt,mDedAmt,pDay,absDed,gross,advDed:advAmt,net,cp:cpN,margin,note,paid:true,paidOn:today(),joinWD:joinWD||null,leftWD:leftWD||null,epfEmpAmt,epfPFAmt,epsAmt,epfErAmt,esicEmpAmt,esicErAmt}]);
     let rem=advAmt;
     setChq(chq.map(c=>{if(c.staffId!==proc.id||c.status!=='pending'||rem<=0)return c;const tk=Math.min(rem,Number(c.expected||c.ret));if(tk<(Number(c.expected||c.ret)))return c;rem-=tk;return{...c,status:'settled',settledOn:today(),settledBy:'salary',shortfall:0};}));
-    setAdv(adv.map(a=>{if(a.staffId!==proc.id||a.status!=='pending'||rem<=0)return a;const tk=Math.min(rem,Number(a.amount));rem-=tk;return tk>=Number(a.amount)?{...a,status:'deducted',dedOn:`${yr}-${String(mon).padStart(2,'0')}`,dedDate:today()}:{...a,origAmount:a.origAmount||a.amount,amount:Number(a.amount)-tk,pNote:`₹${tk.toFixed(0)} deducted`};}));
+    setAdv(advDeduct(adv,proc.id,rem,salId,yr,mon));
     if(cpN>0&&margin>0){setChq(prev=>[...prev,{id:uid(),staffId:proc.id,client:proc.client||'',chqAmt:String(margin),ret:String(margin),expected:margin,shortfall:0,date:today(),chqNo:'',note:`Auto — ${mName(mon,yr)}`,status:'pending',autoCreated:true}]);msg('Processed! Cheque return auto-created.');}
     else msg('Salary processed!');setProc(null);};
   const delS=id=>{setSal(sal.filter(s=>s.id!==id));msg('Deleted');};
@@ -2206,7 +2222,7 @@ function PgAdv({staff,adv,setAdv,chq,sal,ctx}){
   const[pdfCat,setPdfCat]=useState('ALL'),[showPdfOpts,setShowPdfOpts]=useState(false);
   const[repayStaffId,setRepayStaffId]=useState(null),[repayAmt,setRepayAmt]=useState('');
   const add=()=>{if(!form.staffId||!form.amount)return msg('Select staff & enter amount','err');setAdv([...adv,{id:uid(),...form,status:'pending'}]);msg('Recorded');setShowF(false);setForm({staffId:'',amount:'',date:today(),note:''});};
-  const delAdv=id=>{setAdv(adv.filter(a=>a.id!==id));msg('Deleted');};
+  const delAdv=id=>{if(!window.confirm('Ye advance record poora delete ho jayega (recovered history bhi). Pakka delete karna hai?'))return;setAdv(adv.filter(a=>a.id!==id));msg('Deleted');};
   const openRepay=staffId=>{setRepayAmt('');setRepayStaffId(staffId);};
   const confirmRepay=()=>{
     const amt=Math.max(0,Number(repayAmt)||0);
@@ -2290,7 +2306,7 @@ function PgAdv({staff,adv,setAdv,chq,sal,ctx}){
         ${isOpen&&html`<div style=${{borderTop:`1px solid ${T.bdr}`,padding:'10px 14px 14px',display:'flex',flexDirection:'column',gap:8}}>
           ${sAdv.length>0&&html`<div style=${{fontSize:10,fontWeight:800,color:T.red,letterSpacing:.6,marginBottom:2}}>CASH ADVANCES</div>`}
           ${sAdv.map(a=>html`<div key=${a.id} style=${{background:T.bg,border:`1px solid ${T.red}22`,borderRadius:10,padding:'9px 11px',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-            <div><div style=${{fontSize:12,fontWeight:700,color:T.txt}}>${a.note||'Advance'}</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>${a.date}</div>${a.pNote&&html`<div style=${{fontSize:10,color:T.yel,marginTop:2}}>⚡ ${a.pNote}</div>`}</div>
+            <div><div style=${{fontSize:12,fontWeight:700,color:T.txt}}>${a.note||'Advance'}</div><div style=${{fontSize:11,color:T.sub,marginTop:2}}>${a.date}</div>${a.pNote&&html`<div style=${{fontSize:10,color:T.yel,marginTop:2}}>⚡ ${a.pNote}</div>`}${Number(a.origAmount)>Number(a.amount)&&html`<div style=${{fontSize:10,color:T.sub,marginTop:2}}>Given ${fR(a.origAmount)} · Recovered ${fR(Number(a.origAmount)-Number(a.amount))} · Pending ${fR(a.amount)}</div>`}</div>
             <div style=${{display:'flex',alignItems:'center',gap:8}}><span style=${{fontSize:14,fontWeight:900,color:T.red,fontFamily:"'Inter'"}}>${fR(a.amount)}</span><button onClick=${()=>delAdv(a.id)} style=${{background:'transparent',border:'none',cursor:'pointer',padding:3,display:'flex'}}><${Ico} n="tr" s=${13} c=${T.mut}/></button></div>
           </div>`)}
           ${sChq.length>0&&html`<div style=${{fontSize:10,fontWeight:800,color:T.yel,letterSpacing:.6,marginTop:4,marginBottom:2}}>UNSETTLED CHEQUES</div>`}
@@ -2442,7 +2458,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
   const getDelPreview=(entry)=>{
     if(!entry)return null;
     const monKey=entry.yr+'-'+String(entry.mon).padStart(2,'0');
-    const affectedAdv=adv.filter(a=>a.staffId===member.id&&a.status==='deducted'&&(a.dedOn===monKey));
+    const affectedAdv=advRestoreForSal(adv,member.id,entry.id,monKey).changed;
     const affectedChq=chq.filter(c=>c.staffId===member.id&&c.status==='settled'&&c.settledOn&&c.settledOn.startsWith&&c.settledOn.startsWith(monKey));
     const autoChq=chq.filter(c=>c.staffId===member.id&&c.autoCreated&&c.note&&c.note.includes(mName(entry.mon,entry.yr)));
     return{entry,affectedAdv,affectedChq,autoChq};
@@ -2455,7 +2471,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
     const autoChqIds=new Set(prev.autoChq.map(c=>c.id));
     setSal(sal.filter(s=>s.id!==delSalConfirm.id));
     if(reversedAdvIds.size>0)
-      setAdv(adv.map(a=>reversedAdvIds.has(a.id)?{...a,status:'pending',dedOn:undefined,pNote:undefined}:a));
+      setAdv(advRestoreForSal(adv,member.id,delSalConfirm.id,delSalConfirm.yr+'-'+String(delSalConfirm.mon).padStart(2,'0')).list);
     if(reversedChqIds.size>0||autoChqIds.size>0)
       setChq(chq.filter(c=>!autoChqIds.has(c.id)).map(c=>reversedChqIds.has(c.id)?{...c,status:'pending',settledOn:undefined,shortfall:0}:c));
     setDelSalConfirm(null);
@@ -2524,7 +2540,7 @@ function LedgerMdl({member,sal,adv,chq,onClose,T,cats,msgFn,aFY,setSal,setAdv,se
     if(!editAdvEntry)return;
     const amt=Number(editAdvForm.amount);
     if(!amt||amt<=0)return msgFn('Valid amount daalo','err');
-    setAdv(adv.map(a=>a.id===editAdvEntry.id?{...a,amount:amt,date:editAdvForm.date,note:editAdvForm.note}:a));
+    setAdv(adv.map(a=>{if(a.id!==editAdvEntry.id)return a;const d=amt-(Number(a.amount)||0);return{...a,amount:amt,origAmount:a.origAmount!=null?(Number(a.origAmount)||0)+d:a.origAmount,date:editAdvForm.date,note:editAdvForm.note};}));
     setEditAdvEntry(null);
     msgFn('✅ Advance updated');
   };
